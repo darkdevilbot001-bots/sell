@@ -37,6 +37,7 @@ class BotManager {
             currentVC: null,
         };
 
+        // Master player event handlers
         this.masterPlayer.on(AudioPlayerStatus.Idle, () => {
             if (this.globalConfig.loop && this.globalConfig.currentAudio) {
                 setTimeout(() => this.playAll(this.globalConfig.currentAudio), 500);
@@ -44,6 +45,12 @@ class BotManager {
                 this.globalConfig.currentAudio = null;
                 this.broadcastStatus();
             }
+        });
+
+        this.masterPlayer.on('error', (error) => {
+            console.error(`[Audio Player] Error: ${error.message}`);
+            this.globalConfig.currentAudio = null;
+            this.broadcastStatus();
         });
 
         this.loadConfig();
@@ -209,6 +216,7 @@ class BotManager {
         this.globalConfig.currentAudio = audioFileName;
         this.saveConfig();
 
+        // Kill any existing ffmpeg process
         if (this.centralFFmpeg) {
             try { this.centralFFmpeg.kill('SIGKILL'); } catch (e) { }
             this.centralFFmpeg = null;
@@ -217,21 +225,40 @@ class BotManager {
 
         const args = this.getFFmpegArgs(filePath, startTime);
 
-        // Use ffmpeg-static path if available
+        // Use system ffmpeg directly (Render has it pre-installed)
+        // Fall back to ffmpeg-static only if needed
         let ffmpegCmd = 'ffmpeg';
         try {
-            ffmpegCmd = require('ffmpeg-static');
+            const staticPath = require('ffmpeg-static');
+            if (staticPath && fs.existsSync(staticPath)) {
+                ffmpegCmd = staticPath;
+            }
         } catch (e) { }
 
+        console.log(`[FFmpeg] Starting: ${ffmpegCmd} with ${args.length} args for ${audioFileName}`);
         this.centralFFmpeg = spawn(ffmpegCmd, args);
 
         this.centralFFmpeg.on('error', (err) => {
-            console.error(`[FFmpeg] Error: ${err.message}`);
+            console.error(`[FFmpeg] Spawn error: ${err.message}`);
         });
 
-        this.centralFFmpeg.stderr.on('data', () => { }); // Suppress ffmpeg logs
+        // Log ffmpeg stderr for debugging (shows encoding info and errors)
+        let stderrData = '';
+        this.centralFFmpeg.stderr.on('data', (chunk) => {
+            stderrData += chunk.toString();
+        });
 
-        // 2MB smooth buffer
+        this.centralFFmpeg.on('close', (code) => {
+            if (code !== 0 && code !== null) {
+                console.error(`[FFmpeg] Exited with code ${code}`);
+                // Log last 500 chars of stderr for debugging
+                if (stderrData) {
+                    console.error(`[FFmpeg] stderr: ${stderrData.slice(-500)}`);
+                }
+            }
+        });
+
+        // 2MB smooth buffer for reliable streaming
         const smoothBuffer = new PassThrough({ highWaterMark: 1024 * 1024 * 2 });
         this.centralFFmpeg.stdout.pipe(smoothBuffer);
 
