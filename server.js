@@ -433,13 +433,15 @@ function requireAuth(req, res, next) {
 
 // Routes
 app.post('/api/login', (req, res) => {
-  const { password } = req.body;
+  const { username, password } = req.body;
   
-  if (password === process.env.ADMIN_PASSWORD || password === 'admin123') {
+  // Admin credentials: username = "veera", password from env or default "admin123"
+  if (username === 'veera' && (password === process.env.ADMIN_PASSWORD || password === 'admin123')) {
     req.session.authenticated = true;
-    res.json({ success: true });
+    req.session.username = username;
+    res.json({ success: true, username });
   } else {
-    res.status(401).json({ error: 'Invalid password' });
+    res.status(401).json({ error: 'Invalid credentials' });
   }
 });
 

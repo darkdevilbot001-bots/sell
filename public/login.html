@@ -150,13 +150,23 @@
 
         <form id="loginForm">
             <div class="form-group">
+                <label for="username">Admin Username</label>
+                <input 
+                    type="text" 
+                    id="username" 
+                    placeholder="Enter admin username" 
+                    required
+                    autofocus
+                    value="veera"
+                >
+            </div>
+            <div class="form-group">
                 <label for="password">Admin Password</label>
                 <input 
                     type="password" 
                     id="password" 
                     placeholder="Enter admin password" 
                     required
-                    autofocus
                 >
             </div>
 
@@ -170,12 +180,12 @@
             </div>
 
             <div class="error-message" id="errorMessage">
-                Invalid password. Please try again.
+                Invalid credentials. Please try again.
             </div>
         </form>
 
         <div class="login-footer">
-            <p>Default password: <strong>admin123</strong></p>
+            <p>Username: <strong>veera</strong> | Password: <strong>admin123</strong></p>
             <p style="margin-top: 5px;">Change in .env file</p>
         </div>
     </div>
@@ -185,11 +195,13 @@
         const loginBtn = document.getElementById('loginBtn');
         const errorMessage = document.getElementById('errorMessage');
         const loading = document.getElementById('loading');
+        const usernameInput = document.getElementById('username');
         const passwordInput = document.getElementById('password');
 
         loginForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             
+            const username = usernameInput.value.trim();
             const password = passwordInput.value;
             
             // Hide any previous error
@@ -206,7 +218,7 @@
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ password })
+                    body: JSON.stringify({ username, password })
                 });
 
                 const data = await response.json();
@@ -216,10 +228,10 @@
                     window.location.href = '/';
                 } else {
                     // Show error
-                    errorMessage.textContent = data.error || 'Invalid password. Please try again.';
+                    errorMessage.textContent = data.error || 'Invalid credentials. Please try again.';
                     errorMessage.classList.add('show');
                     passwordInput.value = '';
-                    passwordInput.focus();
+                    usernameInput.focus();
                 }
             } catch (error) {
                 errorMessage.textContent = 'Connection error. Please try again.';
