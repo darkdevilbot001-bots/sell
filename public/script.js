@@ -15,6 +15,49 @@ function initializeApp() {
     setupEventListeners();
     setupSidebarNavigation();
     loadAudioFiles();
+    loadUsers();
+}
+
+// User Management
+function loadUsers() {
+    fetch('/api/users')
+        .then(res => {
+            if (!res.ok) throw new Error('Unauthorized');
+            return res.json();
+        })
+        .then(users => updateUsersList(users))
+        .catch(err => console.log('Not authenticated to load users yet.'));
+}
+
+function updateUsersList(users) {
+    const list = document.getElementById('usersList');
+    if (!list) return;
+    list.innerHTML = '';
+    users.forEach(user => {
+        list.innerHTML += `
+            <div class="audio-item">
+                <div class="audio-info">
+                    <div class="audio-name">${user.username}</div>
+                    <div class="audio-size">Role: ${user.role}</div>
+                </div>
+                <div class="audio-actions">
+                    ${user.username !== 'veera' ? `<button class="btn btn-danger" onclick="deleteUser('${user.username}')"><i class="fa-solid fa-trash"></i></button>` : ''}
+                </div>
+            </div>
+        `;
+    });
+}
+
+async function deleteUser(username) {
+    if (!confirm(`Delete user ${username}?`)) return;
+    try {
+        const res = await fetch(`/api/users/${username}`, { method: 'DELETE' });
+        const result = await res.json();
+        if (result.success) loadUsers();
+        else alert(result.error);
+    } catch (e) {
+        alert(e.message);
+    }
 }
 
 // Authentication
@@ -76,35 +119,70 @@ function setupEventListeners() {
         addBot(token);
     });
 
-    // Global Actions (Placeholders for now, or routing to first bot)
-    document.getElementById('globalJoinBtn').addEventListener('click', () => {
-        const channelId = document.getElementById('globalChannelId').value;
+    // User Form
+    const addUserForm = document.getElementById('addUserForm');
+    if (addUserForm) {
+        addUserForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('newUsername').value;
+            const password = document.getElementById('newPassword').value;
+            try {
+                const res = await fetch('/api/users', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const result = await res.json();
+                if (result.success) {
+                    addUserForm.reset();
+                    loadUsers();
+                } else {
+                    alert(result.error);
+                }
+            } catch (err) {
+                alert(err.message);
+            }
+        });
+    }
+
+    // Global Actions
+    const joinAllHandler = () => {
+        const channelId = document.getElementById('globalChannelId')?.value || document.getElementById('globalControlChannelId')?.value;
         if (!channelId) {
             alert('Please enter a channel ID');
             return;
         }
-        // In a real scenario, this would tell the server to distribute bots to this channel
-        // For now, let's just make the first offline bot join
-        const availableBot = currentBots.find(b => b.status === 'online' || b.status === 'offline');
-        if (availableBot) {
-            socket.emit('joinChannel', { botId: availableBot.id, guildId: 'global', channelId: channelId });
-        } else {
-            alert('No available bots to join.');
-        }
-    });
+        socket.emit('joinAllChannels', { guildId: 'global', channelId: channelId });
+    };
 
-    document.getElementById('globalLeaveBtn').addEventListener('click', () => {
-        currentBots.forEach(bot => {
-            if(bot.status === 'in-voice') {
-                socket.emit('leaveChannel', { botId: bot.id });
-            }
-        });
-    });
-    
-    // Global player controls (mocking first bot)
-    document.getElementById('globalStopBtn').addEventListener('click', () => {
-        currentBots.forEach(bot => socket.emit('stopPlayback', { botId: bot.id }));
-    });
+    const leaveAllHandler = () => {
+        socket.emit('leaveAllChannels');
+    };
+
+    const playAllHandler = () => {
+        const select = document.getElementById('globalAudioSelect');
+        if (!select || !select.value) {
+            alert('Please select an audio file first');
+            return;
+        }
+        socket.emit('playAudioGlobal', { filename: select.value });
+    };
+
+    const stopAllHandler = () => {
+        socket.emit('stopAudioGlobal');
+    };
+
+    // Bind handlers to multiple buttons if they exist
+    document.getElementById('globalJoinBtn')?.addEventListener('click', joinAllHandler);
+    document.getElementById('btnJoinAll')?.addEventListener('click', joinAllHandler);
+
+    document.getElementById('globalLeaveBtn')?.addEventListener('click', leaveAllHandler);
+    document.getElementById('btnLeaveAll')?.addEventListener('click', leaveAllHandler);
+
+    document.getElementById('btnPlayAll')?.addEventListener('click', playAllHandler);
+
+    document.getElementById('globalStopBtn')?.addEventListener('click', stopAllHandler);
+    document.getElementById('btnStopAll')?.addEventListener('click', stopAllHandler);
 }
 
 // Socket.IO Event Listeners
@@ -286,24 +364,40 @@ function loadAudioFiles() {
 
 function updateAudioLibrary(files) {
     const audioList = document.getElementById('audioList');
-    audioList.innerHTML = '';
+    const globalSelect = document.getElementById('globalAudioSelect');
+    
+    if(audioList) audioList.innerHTML = '';
+    if(globalSelect) {
+        globalSelect.innerHTML = '<option value="">Select Audio File...</option>';
+    }
 
     files.forEach(file => {
-        const item = document.createElement('div');
-        item.className = 'audio-item';
-        item.innerHTML = `
-            <div class="audio-info">
-                <div class="audio-name" title="${file.originalname || file.filename}">
-                    ${file.originalname || file.filename}
+        // Update Library List
+        if (audioList) {
+            const item = document.createElement('div');
+            item.className = 'audio-item';
+            item.innerHTML = `
+                <div class="audio-info">
+                    <div class="audio-name" title="${file.originalname || file.filename}">
+                        ${file.originalname || file.filename}
+                    </div>
+                    <div class="audio-size">${formatBytes(file.size)}</div>
                 </div>
-                <div class="audio-size">${formatBytes(file.size)}</div>
-            </div>
-            <div class="audio-actions">
-                <button class="btn btn-primary" onclick="playAudioFile('${file.filename}')"><i class="fa-solid fa-play"></i></button>
-                <button class="btn btn-danger" onclick="deleteAudioFile('${file.filename}')"><i class="fa-solid fa-trash"></i></button>
-            </div>
-        `;
-        audioList.appendChild(item);
+                <div class="audio-actions">
+                    <button class="btn btn-primary" onclick="playAudioFile('${file.filename}')"><i class="fa-solid fa-play"></i></button>
+                    <button class="btn btn-danger" onclick="deleteAudioFile('${file.filename}')"><i class="fa-solid fa-trash"></i></button>
+                </div>
+            `;
+            audioList.appendChild(item);
+        }
+
+        // Update Global Dropdown
+        if (globalSelect) {
+            const option = document.createElement('option');
+            option.value = file.filename;
+            option.textContent = file.originalname || file.filename;
+            globalSelect.appendChild(option);
+        }
     });
 }
 
@@ -407,3 +501,4 @@ function addLogEntry(log) {
 
 window.playAudioFile = playAudioFile;
 window.deleteAudioFile = deleteAudioFile;
+window.deleteUser = deleteUser;

@@ -110,14 +110,54 @@
                     </div>
                 </div>
                 
-                <!-- Placeholder Views -->
+                <!-- Global Controls View -->
                 <div id="global-controls-view" class="view">
                     <div class="view-header"><h2>Global Controls</h2></div>
-                    <p class="placeholder-text">This section is currently under development.</p>
+                    <div class="panel">
+                        <div class="global-controls-grid" style="display: grid; gap: 20px; grid-template-columns: 1fr 1fr;">
+                            <div class="control-box">
+                                <h3>Global Connection</h3>
+                                <div class="input-group" style="margin-bottom: 10px;">
+                                    <input type="text" id="globalControlChannelId" placeholder="Channel ID" style="width: 100%; padding: 10px; background: var(--bg-main); border: 1px solid var(--border-color); color: white; border-radius: 6px;">
+                                </div>
+                                <button class="btn btn-primary" id="btnJoinAll" style="width: 100%; margin-bottom: 10px;">Join All Bots</button>
+                                <button class="btn btn-danger" id="btnLeaveAll" style="width: 100%;">Disconnect All</button>
+                            </div>
+                            <div class="control-box">
+                                <h3>Global Playback</h3>
+                                <div class="input-group" style="margin-bottom: 10px;">
+                                    <select id="globalAudioSelect" style="width: 100%; padding: 10px; background: var(--bg-main); border: 1px solid var(--border-color); color: white; border-radius: 6px;">
+                                        <option value="">Select Audio File...</option>
+                                    </select>
+                                </div>
+                                <button class="btn btn-primary" id="btnPlayAll" style="width: 100%; margin-bottom: 10px;">Play on All Connected</button>
+                                <button class="btn btn-danger" id="btnStopAll" style="width: 100%;">Stop Playback on All</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
+
+                <!-- User Manager View -->
                 <div id="user-manager-view" class="view">
                     <div class="view-header"><h2>User Manager</h2></div>
-                    <p class="placeholder-text">This section is currently under development.</p>
+                    <div class="panel">
+                        <div style="display: flex; gap: 20px;">
+                            <div style="flex: 1;">
+                                <h3>Add New User</h3>
+                                <form id="addUserForm" style="display: flex; flex-direction: column; gap: 10px; margin-top: 15px;">
+                                    <input type="text" id="newUsername" placeholder="Username" required style="padding: 10px; background: var(--bg-main); border: 1px solid var(--border-color); color: white; border-radius: 6px;">
+                                    <input type="password" id="newPassword" placeholder="Password" required style="padding: 10px; background: var(--bg-main); border: 1px solid var(--border-color); color: white; border-radius: 6px;">
+                                    <button type="submit" class="btn btn-primary">Add User</button>
+                                </form>
+                            </div>
+                            <div style="flex: 2;">
+                                <h3>Current Users</h3>
+                                <div class="audio-list" id="usersList" style="margin-top: 15px;">
+                                    <!-- Users injected here -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
             </div>

@@ -431,17 +431,52 @@ function requireAuth(req, res, next) {
   }
 }
 
+// User Management (In-memory)
+const users = [
+  { username: 'veera', password: process.env.ADMIN_PASSWORD || 'admin123', role: 'admin' }
+];
+
 // Routes
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
+  const user = users.find(u => u.username === username && u.password === password);
   
-  // Admin credentials: username = "veera", password from env or default "admin123"
-  if (username === 'veera' && (password === process.env.ADMIN_PASSWORD || password === 'admin123')) {
+  if (user) {
     req.session.authenticated = true;
     req.session.username = username;
-    res.json({ success: true, username });
+    req.session.role = user.role;
+    res.json({ success: true, username: user.username, role: user.role });
   } else {
     res.status(401).json({ error: 'Invalid credentials' });
+  }
+});
+
+app.get('/api/users', requireAuth, (req, res) => {
+  res.json(users.map(u => ({ username: u.username, role: u.role })));
+});
+
+app.post('/api/users', requireAuth, (req, res) => {
+  const { username, password, role } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password required' });
+  }
+  if (users.find(u => u.username === username)) {
+    return res.status(400).json({ error: 'User already exists' });
+  }
+  users.push({ username, password, role: role || 'user' });
+  res.json({ success: true });
+});
+
+app.delete('/api/users/:username', requireAuth, (req, res) => {
+  if (req.params.username === 'veera') {
+    return res.status(400).json({ error: 'Cannot delete primary admin' });
+  }
+  const index = users.findIndex(u => u.username === req.params.username);
+  if (index !== -1) {
+    users.splice(index, 1);
+    res.json({ success: true });
+  } else {
+    res.status(404).json({ error: 'User not found' });
   }
 });
 
@@ -797,6 +832,62 @@ io.on('connection', (socket) => {
     } catch (error) {
       socket.emit('operationResult', { success: false, message: error.message });
     }
+  });
+
+  // Global Controls
+  socket.on('joinAllChannels', async (data) => {
+    let successCount = 0;
+    const promises = [];
+    for (const [botId, bot] of botManager.bots.entries()) {
+      if (bot.status === 'online') {
+        promises.push(botManager.joinVoiceChannel(botId, data.guildId, data.channelId, bot.token)
+          .then(() => successCount++)
+          .catch(() => {}));
+      }
+    }
+    await Promise.all(promises);
+    socket.emit('operationResult', { success: true, message: `Joined ${successCount} bots to channel` });
+  });
+
+  socket.on('leaveAllChannels', async () => {
+    let successCount = 0;
+    const promises = [];
+    for (const [botId, bot] of botManager.bots.entries()) {
+      if (bot.status === 'in-voice') {
+        promises.push(botManager.leaveVoiceChannel(botId)
+          .then(() => successCount++)
+          .catch(() => {}));
+      }
+    }
+    await Promise.all(promises);
+    socket.emit('operationResult', { success: true, message: `Disconnected ${successCount} bots` });
+  });
+
+  socket.on('playAudioGlobal', async (data) => {
+    let successCount = 0;
+    const promises = [];
+    for (const [botId, bot] of botManager.bots.entries()) {
+      if (bot.status === 'in-voice') {
+        promises.push(botManager.playAudioFile(botId, data.filename)
+          .then(() => successCount++)
+          .catch(() => {}));
+      }
+    }
+    await Promise.all(promises);
+    socket.emit('operationResult', { success: true, message: `Started playback on ${successCount} bots` });
+  });
+
+  socket.on('stopAudioGlobal', () => {
+    let successCount = 0;
+    for (const [botId, bot] of botManager.bots.entries()) {
+      if (bot.status === 'in-voice' && bot.currentAudio) {
+        try {
+          botManager.stopPlayback(botId);
+          successCount++;
+        } catch(e) {}
+      }
+    }
+    socket.emit('operationResult', { success: true, message: `Stopped playback on ${successCount} bots` });
   });
 
   socket.on('disconnect', () => {
