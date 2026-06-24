@@ -166,10 +166,18 @@ class BotManager {
     }
 
     try {
+      // If guildId is global or missing, resolve it from the channel ID
+      let resolvedGuildId = guildId;
+      if (!resolvedGuildId || resolvedGuildId === 'global') {
+        const channel = await bot.client.channels.fetch(channelId).catch(() => null);
+        if (!channel) throw new Error('Cannot find channel. Ensure bot is in the server.');
+        resolvedGuildId = channel.guildId || channel.guild.id;
+      }
+
       const connection = joinVoiceChannel({
         channelId: channelId,
-        guildId: guildId,
-        adapterCreator: bot.client.guilds.cache.get(guildId)?.voiceAdapterCreator,
+        guildId: resolvedGuildId,
+        adapterCreator: bot.client.guilds.cache.get(resolvedGuildId)?.voiceAdapterCreator,
       });
 
       bot.connection = connection;
