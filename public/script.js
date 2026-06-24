@@ -225,9 +225,10 @@ function setupSocketListeners() {
     });
 
     socket.on('operationResult', (result) => {
-        // use a simple alert or custom toast if implemented
-        if(!result.success) {
+        if (result.message) {
             alert(result.message);
+        } else if (!result.success) {
+            alert('Operation failed');
         }
     });
 }
