@@ -65,8 +65,11 @@ function checkAuthStatus() {
     fetch('/api/auth/status')
         .then(res => res.json())
         .then(data => {
-            if (data.authenticated) {
+            const isLoginPage = window.location.pathname.endsWith('login.html');
+            if (data.authenticated && isLoginPage) {
                 window.location.href = '/';
+            } else if (!data.authenticated && !isLoginPage) {
+                window.location.href = '/login.html';
             }
         });
 }
@@ -234,10 +237,15 @@ function loadBots() {
     fetch('/api/bots')
         .then(res => res.json())
         .then(bots => {
+            if (!Array.isArray(bots)) {
+                console.error("Failed to load bots:", bots);
+                return;
+            }
             currentBots = bots;
             updateBotsGrid(bots);
             updateGlobalPlayer();
-        });
+        })
+        .catch(err => console.error("Error loading bots:", err));
 }
 
 // Update system stats
