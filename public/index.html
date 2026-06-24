@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Bot Audio Control Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎵 Multi-Bot Audio Control Dashboard</h1>
+            <div class="header-controls">
+                <button id="logoutBtn" class="btn btn-secondary">Logout</button>
+                <button id="addBotBtn" class="btn btn-secondary">+ Add Bot</button>
+            </div>
+        </header>
+
+        <!-- System Stats Bar -->
+        <div class="stats-bar">
+            <div class="stat">
+                <span class="stat-label">CPU Usage:</span>
+                <span id="cpuUsage">0%</span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Memory:</span>
+                <span id="memoryUsage">0 MB</span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Uptime:</span>
+                <span id="uptime">0s</span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Online Bots:</span>
+                <span id="onlineBots">0/30</span>
+            </div>
+        </div>
+
+        <!-- Activity Log -->
+        <div class="log-panel">
+            <h3>📋 Activity Log</h3>
+            <div id="logContainer" class="log-container"></div>
+        </div>
+
+        <main>
+            <!-- Audio Library Panel -->
+            <div class="panel audio-library">
+                <h2>🎧 Audio Library</h2>
+                <div class="upload-section">
+                    <input type="file" id="audioUpload" accept=".mp3,audio/*" multiple>
+                    <button id="uploadBtn" class="btn btn-primary">Upload Audio</button>
+                </div>
+                <div id="audioList" class="audio-list">
+                    <!-- Audio files will be listed here -->
+                </div>
+            </div>
+
+            <!-- Bots Grid -->
+            <div class="bots-grid" id="botsGrid">
+                <!-- Bot cards will be generated here -->
+            </div>
+        </main>
+    </div>
+
+    <!-- Add Bot Modal -->
+    <div id="addBotModal" class="modal">
+        <div class="modal-content">
+            <h2>Add New Bot</h2>
+            <form id="addBotForm">
+                <label for="botToken">Bot Token:</label>
+                <input type="text" id="botToken" placeholder="Enter Discord bot token" required>
+                <div class="modal-buttons">
+                    <button type="button" class="btn btn-secondary" id="closeModal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Add Bot</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
