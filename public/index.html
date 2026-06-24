@@ -3,63 +3,138 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Multi-Bot Audio Control Dashboard</title>
+    <title>Dark Empire | Bot Dashboard</title>
     <link rel="stylesheet" href="style.css">
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>🎵 Multi-Bot Audio Control Dashboard</h1>
-            <div class="header-controls">
-                <button id="logoutBtn" class="btn btn-secondary">Logout</button>
-                <button id="addBotBtn" class="btn btn-secondary">+ Add Bot</button>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2><i class="fa-solid fa-microchip icon-blue"></i> DARK EMPIRE</h2>
             </div>
-        </header>
+            
+            <nav class="sidebar-nav">
+                <a href="#" class="nav-item active" data-target="dashboard-view">
+                    <i class="fa-solid fa-table-cells-large"></i> Dashboard
+                </a>
+                <a href="#" class="nav-item" data-target="audio-library-view">
+                    <i class="fa-solid fa-music"></i> Audio Library
+                </a>
+                <a href="#" class="nav-item placeholder" data-target="global-controls-view">
+                    <i class="fa-solid fa-sliders"></i> Global Controls
+                </a>
+                <a href="#" class="nav-item placeholder" data-target="user-manager-view">
+                    <i class="fa-solid fa-users"></i> User Manager
+                </a>
+                <a href="#" class="nav-item" data-target="live-logs-view">
+                    <i class="fa-solid fa-terminal"></i> Live Logs
+                </a>
+                <a href="#" class="nav-item logout" id="logoutBtn">
+                    <i class="fa-solid fa-right-from-bracket"></i> Logout
+                </a>
+            </nav>
 
-        <!-- System Stats Bar -->
-        <div class="stats-bar">
-            <div class="stat">
-                <span class="stat-label">CPU Usage:</span>
-                <span id="cpuUsage">0%</span>
-            </div>
-            <div class="stat">
-                <span class="stat-label">Memory:</span>
-                <span id="memoryUsage">0 MB</span>
-            </div>
-            <div class="stat">
-                <span class="stat-label">Uptime:</span>
-                <span id="uptime">0s</span>
-            </div>
-            <div class="stat">
-                <span class="stat-label">Online Bots:</span>
-                <span id="onlineBots">0/30</span>
-            </div>
-        </div>
-
-        <!-- Activity Log -->
-        <div class="log-panel">
-            <h3>📋 Activity Log</h3>
-            <div id="logContainer" class="log-container"></div>
-        </div>
-
-        <main>
-            <!-- Audio Library Panel -->
-            <div class="panel audio-library">
-                <h2>🎧 Audio Library</h2>
-                <div class="upload-section">
-                    <input type="file" id="audioUpload" accept=".mp3,audio/*" multiple>
-                    <button id="uploadBtn" class="btn btn-primary">Upload Audio</button>
+            <div class="sidebar-stats">
+                <div class="stat-row">
+                    <span class="stat-label">CPU</span>
+                    <div class="stat-bar-container">
+                        <div class="stat-bar" id="cpuBar" style="width: 0%"></div>
+                    </div>
                 </div>
-                <div id="audioList" class="audio-list">
-                    <!-- Audio files will be listed here -->
+                <div class="stat-row">
+                    <span class="stat-label">MEM</span>
+                    <div class="stat-bar-container">
+                        <div class="stat-bar" id="memBar" style="width: 0%"></div>
+                    </div>
                 </div>
             </div>
+        </aside>
 
-            <!-- Bots Grid -->
-            <div class="bots-grid" id="botsGrid">
-                <!-- Bot cards will be generated here -->
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Top Bar -->
+            <header class="top-bar">
+                <div class="global-actions">
+                    <div class="input-group">
+                        <i class="fa-solid fa-link"></i>
+                        <input type="text" id="globalChannelId" placeholder="Paste Channel ID here (Right-click Channel)">
+                    </div>
+                    <button class="btn btn-primary" id="globalJoinBtn">JOIN VC</button>
+                    <button class="btn btn-danger" id="globalLeaveBtn">LEAVE ALL</button>
+                </div>
+                <div class="status-badge offline" id="globalStatus">
+                    OFFLINE
+                </div>
+            </header>
+
+            <!-- Views Container -->
+            <div class="views-container">
+                
+                <!-- Dashboard View -->
+                <div id="dashboard-view" class="view active">
+                    <div class="view-header">
+                        <h2>Bot Fleet (<span id="onlineBotsCount">0</span>/10)</h2>
+                        <button id="addBotBtn" class="btn btn-outline">+ Add Bot</button>
+                    </div>
+                    <div class="bots-grid" id="botsGrid">
+                        <!-- Bot cards will be injected here -->
+                    </div>
+                </div>
+
+                <!-- Audio Library View -->
+                <div id="audio-library-view" class="view">
+                    <div class="view-header">
+                        <h2>Audio Library</h2>
+                    </div>
+                    <div class="panel">
+                        <div class="upload-section">
+                            <input type="file" id="audioUpload" accept=".mp3,audio/*" multiple>
+                            <button id="uploadBtn" class="btn btn-primary">Upload Audio</button>
+                        </div>
+                        <div id="audioList" class="audio-list">
+                            <!-- Audio files will be listed here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live Logs View -->
+                <div id="live-logs-view" class="view">
+                    <div class="view-header">
+                        <h2>Live Logs</h2>
+                    </div>
+                    <div class="log-panel">
+                        <div id="logContainer" class="log-container"></div>
+                    </div>
+                </div>
+                
+                <!-- Placeholder Views -->
+                <div id="global-controls-view" class="view">
+                    <div class="view-header"><h2>Global Controls</h2></div>
+                    <p class="placeholder-text">This section is currently under development.</p>
+                </div>
+                <div id="user-manager-view" class="view">
+                    <div class="view-header"><h2>User Manager</h2></div>
+                    <p class="placeholder-text">This section is currently under development.</p>
+                </div>
+
             </div>
         </main>
+
+        <!-- Bottom Player Bar -->
+        <footer class="bottom-player">
+            <div class="now-playing-info">
+                <i class="fa-solid fa-compact-disc icon-blue"></i>
+                <span id="globalNowPlaying" class="track-name">NO TRACK SELECTED</span>
+            </div>
+            <div class="player-controls">
+                <button class="icon-btn" id="globalLoopBtn"><i class="fa-solid fa-rotate-right"></i></button>
+                <button class="icon-btn stop-btn" id="globalStopBtn"><i class="fa-solid fa-stop"></i></button>
+                <button class="icon-btn" id="globalRefreshBtn"><i class="fa-solid fa-arrow-rotate-right"></i></button>
+            </div>
+        </footer>
     </div>
 
     <!-- Add Bot Modal -->
@@ -70,7 +145,7 @@
                 <label for="botToken">Bot Token:</label>
                 <input type="text" id="botToken" placeholder="Enter Discord bot token" required>
                 <div class="modal-buttons">
-                    <button type="button" class="btn btn-secondary" id="closeModal">Cancel</button>
+                    <button type="button" class="btn btn-outline" id="closeModal">Cancel</button>
                     <button type="submit" class="btn btn-primary">Add Bot</button>
                 </div>
             </form>

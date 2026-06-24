@@ -1,0 +1,31 @@
+{
+  "name": "multi-bot-desktop",
+  "version": "1.0.0",
+  "description": "Multi-Bot Audio Control Desktop App - Connect to 2 Render Instances",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win --x64"
+  },
+  "build": {
+    "appId": "com.multibot.desktop",
+    "productName": "Multi-Bot Audio Control",
+    "win": {
+      "target": "nsis",
+      "icon": "icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "icon.ico"
+    }
+  },
+  "keywords": ["discord", "bot", "audio", "dashboard"],
+  "license": "MIT",
+  "dependencies": {
+    "electron": "^28.0.0"
+  },
+  "devDependencies": {
+    "electron-builder": "^24.9.1"
+  }
+}

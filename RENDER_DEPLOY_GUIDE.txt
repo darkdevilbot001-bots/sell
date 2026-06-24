@@ -1,0 +1,37 @@
+========================================
+RENDER DEPLOYMENT GUIDE - TAMIL + ENGLISH
+========================================
+
+Render la deploy panna follow pannunga:
+
+1️⃣  **Branch** - Change to → `master` (main illa, master)
+2️⃣  **Language** - Change to → `Node` (Python 3 illa)
+3️⃣  **Build Command** - Change to → `npm install`
+4️⃣  **Start Command** - Change to → `node server.js`
+5️⃣  **Root Directory** - Leave EMPTY (empty blank)
+
+6️⃣  **Environment Variables - These already set sari:**
+
+    PORT = 3000 ✅
+    SESSION_SECRET = ✅ (already)
+    ADMIN_PASSWORD = admin123 ✅
+    BOT_TOKENS = (paste all 30 tokens comma separated)
+    AUDIO_STORAGE_PATH = ./audio-files ✅
+    MAX_AUDIO_SIZE = 50 ✅
+    NODE_ENV = production ✅
+
+7️⃣ 🔴 IMPORTANT - BOT_TOKENS la paste pannanum:
+
+Copy paste pannunga below line in BOT_TOKENS env var:
+
+(Paste your tokens here comma separated)
+
+8️⃣ ⭐ After deployment complete, Render kudukum URL:
+   Example: https://sell.onrender.com
+   Atha copy panni vechikonga. Andha link ah naan Electron app configure panniduven.
+
+9️⃣ Same settings la 2nd Instance um create pannunga (same code, same settings)
+   Render URL 1: ______________
+   Render URL 2: ______________
+
+🔟 Rendila successful ah deploy aana aprm naan Electron Desktop App create panniduven!

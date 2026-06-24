@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Bot Audio Control - Desktop</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg-color: #1a1b1e;
+            --panel-bg: #2f3136;
+            --text-color: #dcddde;
+            --primary: #5865F2;
+            --success: #57F287;
+            --danger: #ED4245;
+            --border: #40444b;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Top Bar */
+        .top-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 20px;
+            background: var(--panel-bg);
+            border-bottom: 2px solid var(--primary);
+            -webkit-app-region: drag;
+            min-height: 48px;
+        }
+
+        .top-bar h1 {
+            font-size: 1.2rem;
+            color: var(--primary);
+            -webkit-app-region: no-drag;
+        }
+
+        .server-tabs {
+            display: flex;
+            gap: 8px;
+            -webkit-app-region: no-drag;
+        }
+
+        .server-tab {
+            padding: 6px 16px;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--text-color);
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+
+        .server-tab:hover {
+            background: var(--border);
+        }
+
+        .server-tab.active {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: white;
+        }
+
+        .server-tab .status-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+
+        .status-dot.online { background: var(--success); }
+        .status-dot.offline { background: var(--danger); }
+
+        /* Settings Button */
+        .settings-btn {
+            -webkit-app-region: no-drag;
+            padding: 6px 12px;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-color);
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+
+        .settings-btn:hover {
+            background: var(--border);
+        }
+
+        /* WebView Container */
+        .webview-container {
+            flex: 1;
+            position: relative;
+        }
+
+        .webview-container webview {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--bg-color);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            transition: opacity 0.3s;
+        }
+
+        .loading-overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid var(--border);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            color: var(--primary);
+            font-size: 1rem;
+        }
+
+        /* Settings Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.8);
+            z-index: 100;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal.show {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--panel-bg);
+            padding: 30px;
+            border-radius: 10px;
+            width: 500px;
+            max-width: 90%;
+        }
+
+        .modal-content h2 {
+            margin-bottom: 20px;
+            color: var(--primary);
+        }
+
+        .server-config {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: var(--bg-color);
+            border-radius: 6px;
+            border: 1px solid var(--border);
+        }
+
+        .server-config h3 {
+            font-size: 0.9rem;
+            color: var(--text-color);
+            margin-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 10px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.8rem;
+            color: #96989d;
+            margin-bottom: 4px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 8px 10px;
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-color);
+            font-size: 0.85rem;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        }
+
+        .btn {
+            padding: 8px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-secondary {
+            background: var(--border);
+            color: var(--text-color);
+        }
+
+        .btn-primary:hover { background: #4854d0; }
+        .btn-secondary:hover { background: #50535b; }
+
+        .footer-info {
+            position: fixed;
+            bottom: 8px;
+            right: 12px;
+            font-size: 0.75rem;
+            color: #96989d;
+            z-index: 5;
+        }
+    </style>
+</head>
+<body>
+    <div class="top-bar">
+        <h1>🎵 Multi-Bot Audio Control</h1>
+        <div class="server-tabs" id="serverTabs"></div>
+        <button class="settings-btn" id="settingsBtn">⚙ Settings</button>
+    </div>
+
+    <div class="webview-container">
+        <div class="loading-overlay" id="loadingOverlay">
+            <div class="spinner"></div>
+            <div class="loading-text" id="loadingText">Connecting to server...</div>
+        </div>
+        <webview id="mainWebview" src="about:blank" preload="webview-preload.js"></webview>
+    </div>
+
+    <div class="footer-info">Multi-Bot Audio Control v1.0</div>
+
+    <!-- Settings Modal -->
+    <div class="modal" id="settingsModal">
+        <div class="modal-content">
+            <h2>⚙ Server Configuration</h2>
+            
+            <div class="server-config">
+                <h3>🔹 Render Instance 1</h3>
+                <div class="form-group">
+                    <label>Server Name</label>
+                    <input type="text" id="s1Name" placeholder="Instance 1">
+                </div>
+                <div class="form-group">
+                    <label>Server URL</label>
+                    <input type="url" id="s1Url" placeholder="https://your-instance-1.onrender.com">
+                </div>
+                <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" id="s1Username" value="veera">
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="s1Password" value="admin123">
+                </div>
+            </div>
+
+            <div class="server-config">
+                <h3>🔸 Render Instance 2</h3>
+                <div class="form-group">
+                    <label>Server Name</label>
+                    <input type="text" id="s2Name" placeholder="Instance 2">
+                </div>
+                <div class="form-group">
+                    <label>Server URL</label>
+                    <input type="url" id="s2Url" placeholder="https://your-instance-2.onrender.com">
+                </div>
+                <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" id="s2Username" value="veera">
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="s2Password" value="admin123">
+                </div>
+            </div>
+
+            <div class="modal-actions">
+                <button class="btn btn-secondary" id="closeSettings">Cancel</button>
+                <button class="btn btn-primary" id="saveSettings">Save & Reload</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="renderer.js"></script>
+</body>
+</html>

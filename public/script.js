@@ -13,6 +13,7 @@ function initializeApp() {
     checkAuthStatus();
     setupSocketListeners();
     setupEventListeners();
+    setupSidebarNavigation();
     loadAudioFiles();
 }
 
@@ -27,16 +28,38 @@ function checkAuthStatus() {
         });
 }
 
+// Sidebar Navigation Logic
+function setupSidebarNavigation() {
+    const navItems = document.querySelectorAll('.nav-item[data-target]');
+    const views = document.querySelectorAll('.view');
+
+    navItems.forEach(item => {
+        item.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (item.classList.contains('placeholder')) return; // Ignore placeholders
+
+            // Remove active from all nav items and views
+            navItems.forEach(nav => nav.classList.remove('active'));
+            views.forEach(view => view.classList.remove('active'));
+
+            // Add active to clicked item and corresponding view
+            item.classList.add('active');
+            const targetId = item.getAttribute('data-target');
+            document.getElementById(targetId).classList.add('active');
+        });
+    });
+}
+
 function setupEventListeners() {
     // Logout
-    document.getElementById('logoutBtn').addEventListener('click', () => {
+    document.getElementById('logoutBtn').addEventListener('click', (e) => {
+        e.preventDefault();
         fetch('/api/logout', { method: 'POST' })
             .then(() => window.location.reload());
     });
 
     // Upload audio
     document.getElementById('uploadBtn').addEventListener('click', uploadAudio);
-    document.getElementById('audioUpload').addEventListener('change', () => {});
 
     // Add Bot Modal
     document.getElementById('addBotBtn').addEventListener('click', () => {
@@ -52,6 +75,36 @@ function setupEventListeners() {
         const token = document.getElementById('botToken').value;
         addBot(token);
     });
+
+    // Global Actions (Placeholders for now, or routing to first bot)
+    document.getElementById('globalJoinBtn').addEventListener('click', () => {
+        const channelId = document.getElementById('globalChannelId').value;
+        if (!channelId) {
+            alert('Please enter a channel ID');
+            return;
+        }
+        // In a real scenario, this would tell the server to distribute bots to this channel
+        // For now, let's just make the first offline bot join
+        const availableBot = currentBots.find(b => b.status === 'online' || b.status === 'offline');
+        if (availableBot) {
+            socket.emit('joinChannel', { botId: availableBot.id, guildId: 'global', channelId: channelId });
+        } else {
+            alert('No available bots to join.');
+        }
+    });
+
+    document.getElementById('globalLeaveBtn').addEventListener('click', () => {
+        currentBots.forEach(bot => {
+            if(bot.status === 'in-voice') {
+                socket.emit('leaveChannel', { botId: bot.id });
+            }
+        });
+    });
+    
+    // Global player controls (mocking first bot)
+    document.getElementById('globalStopBtn').addEventListener('click', () => {
+        currentBots.forEach(bot => socket.emit('stopPlayback', { botId: bot.id }));
+    });
 }
 
 // Socket.IO Event Listeners
@@ -59,6 +112,13 @@ function setupSocketListeners() {
     socket.on('connect', () => {
         console.log('Connected to server');
         loadBots();
+        document.getElementById('globalStatus').className = 'status-badge online';
+        document.getElementById('globalStatus').textContent = 'ONLINE';
+    });
+    
+    socket.on('disconnect', () => {
+        document.getElementById('globalStatus').className = 'status-badge offline';
+        document.getElementById('globalStatus').textContent = 'OFFLINE';
     });
 
     socket.on('systemStats', (stats) => {
@@ -68,10 +128,15 @@ function setupSocketListeners() {
     socket.on('allBotsUpdate', (bots) => {
         currentBots = bots;
         updateBotsGrid(bots);
+        updateGlobalPlayer();
     });
 
     socket.on('botUpdate', (botData) => {
         updateBotCard(botData);
+        // also update the global list reference
+        const idx = currentBots.findIndex(b => b.id === botData.id);
+        if(idx !== -1) currentBots[idx] = botData;
+        updateGlobalPlayer();
     });
 
     socket.on('newLog', (log) => {
@@ -79,7 +144,10 @@ function setupSocketListeners() {
     });
 
     socket.on('operationResult', (result) => {
-        showNotification(result.message, result.success ? 'success' : 'error');
+        // use a simple alert or custom toast if implemented
+        if(!result.success) {
+            alert(result.message);
+        }
     });
 }
 
@@ -90,17 +158,22 @@ function loadBots() {
         .then(bots => {
             currentBots = bots;
             updateBotsGrid(bots);
+            updateGlobalPlayer();
         });
 }
 
 // Update system stats
 function updateSystemStats(stats) {
-    document.getElementById('cpuUsage').textContent = stats.cpu + ' ms';
-    document.getElementById('memoryUsage').textContent = formatBytes(stats.memory);
-    document.getElementById('uptime').textContent = formatUptime(stats.uptime);
+    // stats.cpu is in ms, let's max it at 100 for percentage
+    const cpuPercent = Math.min(parseFloat(stats.cpu) || 0, 100);
+    document.getElementById('cpuBar').style.width = cpuPercent + '%';
+
+    // memory stats.memory is bytes. Max arbitrary 1GB for percentage
+    const memPercent = Math.min((stats.memory / (1024*1024*1024)) * 100, 100);
+    document.getElementById('memBar').style.width = memPercent + '%';
     
     const online = currentBots.filter(b => b.status === 'online' || b.status === 'in-voice').length;
-    document.getElementById('onlineBots').textContent = `${online}/30`;
+    document.getElementById('onlineBotsCount').textContent = online;
 }
 
 // Format helpers
@@ -112,15 +185,14 @@ function formatBytes(bytes) {
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
 }
 
-function formatUptime(seconds) {
-    const days = Math.floor(seconds / 86400);
-    const hours = Math.floor((seconds % 86400) / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = Math.floor(seconds % 60);
-    
-    if (days > 0) return `${days}d ${hours}h`;
-    if (hours > 0) return `${hours}h ${minutes}m`;
-    return `${minutes}m ${secs}s`;
+function updateGlobalPlayer() {
+    const playingBot = currentBots.find(b => b.currentAudio);
+    const globalNowPlaying = document.getElementById('globalNowPlaying');
+    if (playingBot && playingBot.currentAudio) {
+        globalNowPlaying.textContent = playingBot.currentAudio;
+    } else {
+        globalNowPlaying.textContent = "NO TRACK SELECTED";
+    }
 }
 
 // Update bots grid
@@ -128,187 +200,77 @@ function updateBotsGrid(bots) {
     const botsGrid = document.getElementById('botsGrid');
     botsGrid.innerHTML = '';
 
-    bots.forEach(bot => {
-        const card = createBotCard(bot);
+    bots.forEach((bot, index) => {
+        const card = createBotCard(bot, index + 1);
         botsGrid.appendChild(card);
     });
 }
 
 // Create bot card HTML
-function createBotCard(bot) {
+function createBotCard(bot, index) {
     const card = document.createElement('div');
-    card.className = `bot-card ${bot.status}`;
+    card.className = 'bot-card';
+    if(bot.status === 'in-voice') card.classList.add('selected'); // Highlight playing bot
     card.id = `bot-${bot.id}`;
 
-    const hasAvatar = bot.avatar ? `<img src="${bot.avatar}" alt="${bot.username}">` : bot.username.charAt(0);
-    const statusClass = bot.status === 'online' ? 'status-online' : 
-                       bot.status === 'in-voice' ? 'status-in-voice' : 'status-offline';
+    const isConnected = bot.status === 'in-voice' || bot.status === 'online';
+    const activeClass = isConnected ? 'active' : 'offline';
+    const activeText = isConnected ? 'ACTIVE' : 'OFFLINE';
 
-    card.innerHTML = `
-        <div class="bot-header">
-            <div class="bot-avatar">${hasAvatar}</div>
-            <div class="bot-info">
-                <h3>${bot.username || `Bot ${bot.id}`}</h3>
-                <span class="bot-id">ID: ${bot.id}</span>
-                <span class="status-indicator ${statusClass}"></span>
-                <span>${bot.status}</span>
-            </div>
-        </div>
-        ${bot.status !== 'offline' ? createControlsHTML(bot) : ''}
-    `;
-
-    // If not offline, skip controls creation since the HTML is already in the template
-    if (bot.status === 'offline') {
-        const controlsDiv = card.querySelector('.bot-controls');
-        if (controlsDiv) controlsDiv.remove();
+    // Stylize the name if empty
+    let displayUsername = bot.username || `Bot ${bot.id}`;
+    if(bot.username && bot.username.length > 0) {
+        // mimic the image style if you want, but using actual username is better
     } else {
-        // Setup event listeners for controls
-        setupBotControls(card, bot.id);
+        displayUsername = `† ‖‖ВЛИ СĐМ‖‖✈#${Math.floor(1000 + Math.random() * 9000)}`;
     }
 
-    return card;
-}
-
-function createControlsHTML(bot) {
-    return `
-        <div class="bot-controls">
-            <div class="control-group">
-                <span>Now Playing: ${bot.currentAudio || 'None'}</span>
-            </div>
-            
-            <div class="control-group">
-                <button class="btn btn-success btn-small" onclick="joinChannel(${bot.id})">Join VC</button>
-                <button class="btn btn-danger btn-small" onclick="leaveChannel(${bot.id})">Leave VC</button>
-                <button class="btn btn-primary btn-small" onclick="togglePlay(${bot.id})">
-                    ${bot.isPaused ? '▶ Play' : '⏸ Pause'}
-                </button>
-                <button class="btn btn-danger btn-small" onclick="stopPlayback(${bot.id})">⏹ Stop</button>
-                <button class="btn btn-secondary btn-small" onclick="toggleLoop(${bot.id})">
-                    🔁 ${bot.isLooping ? 'ON' : 'OFF'}
-                </button>
-            </div>
-
-            <div class="control-group">
-                <label>Volume:</label>
-                <input type="range" min="0" max="200" value="${bot.volume}" 
-                       oninput="setVolume(${bot.id}, this.value)">
-                <span class="value-display">${bot.volume}%</span>
-            </div>
-
-            <div class="control-group">
-                <label>Bass Boost:</label>
-                <input type="range" min="0" max="100" value="${bot.bassBoost}" 
-                       oninput="setBassBoost(${bot.id}, this.value)">
-                <span class="value-display">${bot.bassBoost}%</span>
-            </div>
-
-            <div class="control-group">
-                <label>Speed:</label>
-                <input type="range" min="0.5" max="2.0" step="0.1" value="${bot.playbackSpeed}" 
-                       oninput="setPlaybackSpeed(${bot.id}, this.value)">
-                <span class="value-display">${bot.playbackSpeed}x</span>
-            </div>
-
-            <div class="control-group">
-                <label>Guild ID:</label>
-                <input type="text" class="guild-id-input" placeholder="Guild ID" value="${bot.guildId || ''}">
-            </div>
-
-            <div class="control-group">
-                <label>Channel ID:</label>
-                <input type="text" class="channel-id-input" placeholder="Channel ID" value="${bot.currentChannel || ''}">
-            </div>
-
-            <div class="audio-library-mini">
-                <select class="audio-select">
-                    <option value="">Select Audio...</option>
-                    ${audioFiles.map(f => `<option value="${f.filename}">${f.originalname}</option>`).join('')}
-                </select>
-                <button class="btn btn-primary btn-small" onclick="playAudio(${bot.id})">Play</button>
-            </div>
+    card.innerHTML = `
+        <div class="bot-card-top">
+            <span class="bot-index">#${index}</span>
+            <span class="bot-status-pill ${activeClass}">${activeText}</span>
+        </div>
+        <div class="bot-name">${displayUsername}</div>
+        <div class="bot-info-line">
+            <i class="fa-solid fa-link"></i>
+            ${bot.status === 'in-voice' ? 'Connected to VC' : 'Disconnected'}
+        </div>
+        <div class="bot-info-line">
+            <i class="fa-solid ${bot.currentAudio ? 'fa-play' : 'fa-pause'}"></i>
+            ${bot.currentAudio ? bot.currentAudio : 'idle'}
         </div>
     `;
-}
 
-function setupBotControls(card, botId) {
-    // Update value displays when sliders change
-    const sliders = card.querySelectorAll('input[type="range"]');
-    sliders.forEach(slider => {
-        slider.addEventListener('input', (e) => {
-            const valueDisplay = e.target.nextElementSibling;
-            if (valueDisplay && valueDisplay.classList.contains('value-display')) {
-                valueDisplay.textContent = e.target.value + (e.target.step === '0.1' ? 'x' : '%');
+    // Make the whole card clickable to connect/disconnect for simplicity
+    card.addEventListener('click', () => {
+        if(bot.status === 'in-voice') {
+            socket.emit('leaveChannel', { botId: bot.id });
+        } else {
+            // Need a channel ID to join. Using the global one if present
+            const globalChannel = document.getElementById('globalChannelId').value;
+            if(globalChannel) {
+                socket.emit('joinChannel', { botId: bot.id, guildId: 'global', channelId: globalChannel });
+            } else {
+                alert('Please enter a Global Channel ID first to join.');
             }
-        });
+        }
     });
+
+    return card;
 }
 
 // Update single bot card
 function updateBotCard(botData) {
     const card = document.getElementById(`bot-${botData.id}`);
     if (card) {
-        const newCard = createBotCard(botData);
+        // find its current index based on dom
+        const botsGrid = document.getElementById('botsGrid');
+        const nodes = Array.from(botsGrid.children);
+        const index = nodes.indexOf(card) + 1;
+        
+        const newCard = createBotCard(botData, index);
         card.replaceWith(newCard);
     }
-}
-
-// Bot control functions
-function joinChannel(botId) {
-    const card = document.getElementById(`bot-${botId}`);
-    const guildId = card.querySelector('.guild-id-input')?.value;
-    const channelId = card.querySelector('.channel-id-input')?.value;
-
-    if (!guildId || !channelId) {
-        showNotification('Please enter Guild ID and Channel ID', 'error');
-        return;
-    }
-
-    socket.emit('joinChannel', { botId, guildId, channelId });
-}
-
-function leaveChannel(botId) {
-    socket.emit('leaveChannel', { botId });
-}
-
-function playAudio(botId) {
-    const card = document.getElementById(`bot-${botId}`);
-    const filename = card.querySelector('.audio-select')?.value;
-
-    if (!filename) {
-        showNotification('Please select an audio file', 'error');
-        return;
-    }
-
-    socket.emit('playAudio', { botId, filename });
-}
-
-function togglePlay(botId) {
-    const bot = currentBots.find(b => b.id === botId);
-    if (bot && bot.isPaused) {
-        socket.emit('resumePlayback', { botId });
-    } else {
-        socket.emit('pausePlayback', { botId });
-    }
-}
-
-function stopPlayback(botId) {
-    socket.emit('stopPlayback', { botId });
-}
-
-function setVolume(botId, value) {
-    socket.emit('setVolume', { botId, volume: parseInt(value) });
-}
-
-function setBassBoost(botId, value) {
-    socket.emit('setBassBoost', { botId, level: parseInt(value) });
-}
-
-function setPlaybackSpeed(botId, value) {
-    socket.emit('setPlaybackSpeed', { botId, speed: parseFloat(value) });
-}
-
-function toggleLoop(botId) {
-    socket.emit('toggleLoop', { botId });
 }
 
 // Audio file management
@@ -319,21 +281,7 @@ function loadAudioFiles() {
             audioFiles = files;
             updateAudioLibrary(files);
         })
-        .catch(err => {
-            console.error('Failed to load audio files:', err);
-            // Load from DB or server files
-            loadAudioFromServer();
-        });
-}
-
-function loadAudioFromServer() {
-    // Fetch from server-side storage
-    fetch('/api/audio-files')
-        .then(res => res.json())
-        .then(files => {
-            audioFiles = files;
-            updateAudioLibrary(files);
-        });
+        .catch(err => console.error('Failed to load audio files:', err));
 }
 
 function updateAudioLibrary(files) {
@@ -351,8 +299,8 @@ function updateAudioLibrary(files) {
                 <div class="audio-size">${formatBytes(file.size)}</div>
             </div>
             <div class="audio-actions">
-                <button class="btn btn-primary btn-small" onclick="playAudioFile('${file.filename}')">Play</button>
-                <button class="btn btn-danger btn-small" onclick="deleteAudioFile('${file.filename}')">Delete</button>
+                <button class="btn btn-primary" onclick="playAudioFile('${file.filename}')"><i class="fa-solid fa-play"></i></button>
+                <button class="btn btn-danger" onclick="deleteAudioFile('${file.filename}')"><i class="fa-solid fa-trash"></i></button>
             </div>
         `;
         audioList.appendChild(item);
@@ -364,7 +312,7 @@ async function uploadAudio() {
     const file = fileInput.files[0];
 
     if (!file) {
-        showNotification('Please select a file', 'error');
+        alert('Please select a file');
         return;
     }
 
@@ -380,24 +328,23 @@ async function uploadAudio() {
         const result = await response.json();
         
         if (result.success) {
-            showNotification('Audio uploaded successfully', 'success');
             fileInput.value = '';
             loadAudioFiles();
         } else {
-            showNotification('Upload failed: ' + result.error, 'error');
+            alert('Upload failed: ' + result.error);
         }
     } catch (error) {
-        showNotification('Upload failed: ' + error.message, 'error');
+        alert('Upload failed: ' + error.message);
     }
 }
 
 function playAudioFile(filename) {
-    // Select in first available bot
-    const onlineBot = currentBots.find(b => b.status === 'online' || b.status === 'in-voice');
+    // Select in first available bot that is in voice
+    const onlineBot = currentBots.find(b => b.status === 'in-voice');
     if (onlineBot) {
         socket.emit('playAudio', { botId: onlineBot.id, filename });
     } else {
-        showNotification('No online bots available', 'error');
+        alert('No bots are in a voice channel to play audio.');
     }
 }
 
@@ -410,10 +357,9 @@ function deleteAudioFile(filename) {
     .then(res => res.json())
     .then(result => {
         if (result.success) {
-            showNotification('File deleted', 'success');
             loadAudioFiles();
         } else {
-            showNotification('Delete failed', 'error');
+            alert('Delete failed');
         }
     });
 }
@@ -430,16 +376,12 @@ function addBot(token) {
     .then(res => res.json())
     .then(result => {
         if (result.success) {
-            showNotification('Bot added successfully', 'success');
             document.getElementById('addBotModal').classList.remove('show');
             document.getElementById('botToken').value = '';
             loadBots();
         } else {
-            showNotification('Failed to add bot: ' + result.error, 'error');
+            alert('Failed to add bot: ' + result.error);
         }
-    })
-    .catch(err => {
-        showNotification('Error adding bot', 'error');
     });
 }
 
@@ -458,60 +400,10 @@ function addLogEntry(log) {
     logContainer.appendChild(entry);
     logContainer.scrollTop = logContainer.scrollHeight;
 
-    // Keep only last 100 logs
     while (logContainer.children.length > 100) {
         logContainer.removeChild(logContainer.firstChild);
     }
 }
 
-// Notification system
-function showNotification(message, type = 'info') {
-    const notification = document.createElement('div');
-    notification.className = `notification ${type}`;
-    notification.textContent = message;
-    notification.style.cssText = `
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        padding: 15px 25px;
-        background-color: ${type === 'success' ? '#57F287' : type === 'error' ? '#ED4245' : '#5865F2'};
-        color: white;
-        border-radius: 5px;
-        z-index: 2000;
-        animation: slideIn 0.3s ease;
-    `;
-    document.body.appendChild(notification);
-
-    setTimeout(() => {
-        notification.remove();
-    }, 3000);
-}
-
-// Add CSS animation for notifications
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes slideIn {
-        from {
-            transform: translateX(400px);
-            opacity: 0;
-        }
-        to {
-            transform: translateX(0);
-            opacity: 1;
-        }
-    }
-`;
-document.head.appendChild(style);
-
-// Make functions global for onclick handlers
-window.joinChannel = joinChannel;
-window.leaveChannel = leaveChannel;
-window.playAudio = playAudio;
-window.stopPlayback = stopPlayback;
-window.togglePlay = togglePlay;
-window.setVolume = setVolume;
-window.setBassBoost = setBassBoost;
-window.setPlaybackSpeed = setPlaybackSpeed;
-window.toggleLoop = toggleLoop;
 window.playAudioFile = playAudioFile;
 window.deleteAudioFile = deleteAudioFile;
