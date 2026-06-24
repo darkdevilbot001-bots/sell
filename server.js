@@ -176,6 +176,16 @@ io.on('connection', (socket) => {
 // --- START ---
 server.listen(PORT, async () => {
     console.log(`[Dashboard] Running at http://localhost:${PORT}`);
+
+    // Log dependency report to diagnose audio issues
+    try {
+        const { generateDependencyReport } = require('@discordjs/voice');
+        console.log('[System] Voice Dependency Report:');
+        console.log(generateDependencyReport());
+    } catch (e) {
+        console.error('[System] Could not generate dependency report:', e.message);
+    }
+
     try {
         await botManager.init();
     } catch (err) {
