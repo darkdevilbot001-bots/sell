@@ -79,13 +79,15 @@ class BotManager {
     return process.env.BOT_TOKENS.split(',').map(t => t.trim()).filter(t => t);
   }
 
-  initializeBots() {
-    this.botTokens.forEach((token, index) => {
+  async initializeBots() {
+    for (let index = 0; index < this.botTokens.length; index++) {
+      const token = this.botTokens[index];
       const botId = index + 1;
+      
       const client = new Client({
         intents: [
           GatewayIntentBits.Guilds,
-          GatewayIntentBits.GuildVoiceStates
+          GatewayIntentBits.GuildVoiceStates,
         ]
       });
 
@@ -846,16 +848,21 @@ io.on('connection', (socket) => {
   // Global Controls
   socket.on('joinAllChannels', async (data) => {
     let successCount = 0;
+    const errors = [];
     const promises = [];
     for (const [botId, bot] of botManager.bots.entries()) {
       if (bot.status === 'online') {
         promises.push(botManager.joinVoiceChannel(botId, data.guildId, data.channelId, bot.token)
           .then(() => successCount++)
-          .catch(() => {}));
+          .catch((err) => { errors.push(`Bot ${botId}: ${err.message}`); }));
       }
     }
     await Promise.all(promises);
-    socket.emit('operationResult', { success: true, message: `Joined ${successCount} bots to channel` });
+    let message = `Joined ${successCount} bots to channel.`;
+    if (errors.length > 0) {
+        message += `\n${errors.length} failed. First error: ${errors[0]}`;
+    }
+    socket.emit('operationResult', { success: true, message });
   });
 
   socket.on('leaveAllChannels', async () => {
