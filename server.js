@@ -108,7 +108,7 @@ class BotManager {
         guildId: null
       };
 
-      client.on('clientReady', () => {
+      client.on('ready', () => {
         botData.status = 'online';
         botData.username = client.user.username;
         botData.avatar = client.user.displayAvatarURL();
@@ -132,7 +132,11 @@ class BotManager {
       });
 
       this.bots.set(botId, botData);
-    });
+
+      // Discord rate limits Identify requests (logins) to 1 per 5 seconds.
+      // We must wait between starting each bot, otherwise Discord blocks the IP.
+      await new Promise(resolve => setTimeout(resolve, 5500));
+    }
   }
 
   sanitizeBotData(data) {
