@@ -7,3 +7,5 @@ dist/
 build/
 .DS_Store
 Thumbs.db
+*.zip
+audio_bot_original/
