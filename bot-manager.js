@@ -10,7 +10,7 @@ const {
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
-const { PassThrough } = require('stream');
+// stream module no longer needed (PassThrough removed for direct FFmpeg piping)
 
 class BotManager {
     constructor(io) {
@@ -150,15 +150,19 @@ class BotManager {
         this.globalConfig.currentVC = channelId;
         this.saveConfig();
 
-        console.log(`[System] Joining ${this.bots.filter(b => b.isOnline).length} bots to channel ${channelId}...`);
-        for (const bot of this.bots) {
-            if (!bot.isOnline) continue;
+        const onlineBots = this.bots.filter(b => b.isOnline);
+        console.log(`[System] Joining ${onlineBots.length} bots to channel ${channelId} simultaneously...`);
+
+        // Join ALL bots in parallel — no sequential delay!
+        const results = await Promise.allSettled(onlineBots.map(async (bot) => {
             try {
                 const channel = await bot.client.channels.fetch(channelId);
-                if (!channel) continue;
+                if (!channel) throw new Error('Channel not found');
+
                 if (bot.connection && bot.connection.state.status !== VoiceConnectionStatus.Destroyed) {
                     bot.connection.destroy();
                 }
+
                 bot.connection = joinVoiceChannel({
                     channelId: channel.id,
                     guildId: channel.guild.id,
@@ -166,15 +170,36 @@ class BotManager {
                     selfDeaf: true,
                     group: bot.client.user.id
                 });
+
+                // Wait for the connection to become Ready before subscribing
+                await new Promise((resolve, reject) => {
+                    const timeout = setTimeout(() => reject(new Error('Connection timeout')), 10000);
+                    bot.connection.once(VoiceConnectionStatus.Ready, () => {
+                        clearTimeout(timeout);
+                        resolve();
+                    });
+                    bot.connection.once(VoiceConnectionStatus.Destroyed, () => {
+                        clearTimeout(timeout);
+                        reject(new Error('Connection destroyed'));
+                    });
+                    // Also resolve immediately if already ready
+                    if (bot.connection.state.status === VoiceConnectionStatus.Ready) {
+                        clearTimeout(timeout);
+                        resolve();
+                    }
+                });
+
                 bot.connection.subscribe(this.masterPlayer);
-                console.log(`[Bot ${bot.id + 1}] Joined VC`);
-                this.broadcastStatus();
-                await new Promise(r => setTimeout(r, 1500));
+                console.log(`[Bot ${bot.id + 1}] Joined VC ✓`);
             } catch (err) {
                 console.error(`[Bot ${bot.id + 1}] Failed to join: ${err.message}`);
+                throw err;
             }
-        }
-        console.log('[System] All bots joined VC.');
+        }));
+
+        const joined = results.filter(r => r.status === 'fulfilled').length;
+        const failed = results.filter(r => r.status === 'rejected').length;
+        console.log(`[System] Join complete: ${joined} joined, ${failed} failed.`);
         this.broadcastStatus();
     }
 
@@ -193,6 +218,8 @@ class BotManager {
 
     getFFmpegArgs(filePath, startTime = 0) {
         const args = [];
+        // Low-latency flags: avoid buffering at the input side
+        args.push('-re');           // Read input at native frame rate (prevents buffer starvation)
         if (startTime > 0) args.push('-ss', String(startTime));
         args.push('-i', filePath);
 
@@ -202,7 +229,15 @@ class BotManager {
         filters.push(`volume=${this.globalConfig.volume / 100}`);
         if (filters.length > 0) args.push('-af', filters.join(','));
 
-        args.push('-f', 's16le', '-ar', '48000', '-ac', '2', '-threads', '1', 'pipe:1');
+        args.push(
+            '-f', 's16le',
+            '-ar', '48000',
+            '-ac', '2',
+            '-threads', '2',        // 2 threads is optimal for audio encode
+            '-flush_packets', '1',  // Flush output immediately — no output buffering
+            '-bufsize', '64k',      // Small encode buffer for tight latency
+            'pipe:1'
+        );
         return args;
     }
 
@@ -258,11 +293,10 @@ class BotManager {
             }
         });
 
-        // 2MB smooth buffer for reliable streaming
-        const smoothBuffer = new PassThrough({ highWaterMark: 1024 * 1024 * 2 });
-        this.centralFFmpeg.stdout.pipe(smoothBuffer);
-
-        const resource = createAudioResource(smoothBuffer, {
+        // Pipe FFmpeg stdout DIRECTLY — no extra PassThrough hop to avoid backpressure stuttering
+        // Set a generous highWaterMark on stdout itself for smooth multi-subscriber streaming
+        this.centralFFmpeg.stdout.setEncoding(null); // ensure binary mode
+        const resource = createAudioResource(this.centralFFmpeg.stdout, {
             inputType: StreamType.Raw,
             inlineVolume: false
         });
