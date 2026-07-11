@@ -5,7 +5,9 @@ const {
     createAudioResource,
     AudioPlayerStatus,
     VoiceConnectionStatus,
-    StreamType
+    StreamType,
+    NoSubscriberBehavior,
+    entersState
 } = require('@discordjs/voice');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -20,9 +22,6 @@ class BotManager {
         this.tokens = this.loadTokens();
         this.audioDir = path.join(__dirname, 'uploads');
         this.dataDir = path.join(__dirname, 'data');
-
-        // MASTER PLAYER: One shared engine for all 30 bots
-        this.masterPlayer = createAudioPlayer({ behaviors: { noSubscriberAction: 'play' } });
         this.centralFFmpeg = null;
 
         if (!fs.existsSync(this.audioDir)) fs.mkdirSync(this.audioDir, { recursive: true });
@@ -37,7 +36,15 @@ class BotManager {
             currentVC: null,
         };
 
-        // Master player event handlers
+        // ─── MASTER PLAYER ──────────────────────────────────────────────────────
+        // noSubscriberAction: 'play' → keeps playing even while bots are still connecting
+        // This ensures latecomers get audio immediately on subscribe
+        this.masterPlayer = createAudioPlayer({
+            behaviors: {
+                noSubscriberAction: NoSubscriberBehavior.Play
+            }
+        });
+
         this.masterPlayer.on(AudioPlayerStatus.Idle, () => {
             if (this.globalConfig.loop && this.globalConfig.currentAudio) {
                 setTimeout(() => this.playAll(this.globalConfig.currentAudio), 500);
@@ -58,12 +65,11 @@ class BotManager {
 
     loadTokens() {
         const tokens = [];
-        // Support both BOT_TOKEN_0..29 (original format) and BOT_TOKENS (comma-separated)
         if (process.env.BOT_TOKENS) {
             const parsed = process.env.BOT_TOKENS.split(',').map(t => t.trim()).filter(t => t);
             tokens.push(...parsed);
         } else {
-            for (let i = 0; i < this.numBots; i++) {
+            for (let i = 0; i < 30; i++) {
                 const token = process.env[`BOT_TOKEN_${i}`];
                 if (token) tokens.push(token.trim());
             }
@@ -79,7 +85,7 @@ class BotManager {
                 const saved = JSON.parse(fs.readFileSync(configPath, 'utf8'));
                 this.globalConfig = { ...this.globalConfig, ...saved };
             } catch (e) {
-                console.error("Error loading config:", e);
+                console.error('Error loading config:', e);
             }
         }
     }
@@ -88,7 +94,7 @@ class BotManager {
         const configPath = path.join(this.dataDir, 'config.json');
         try {
             fs.writeFileSync(configPath, JSON.stringify(this.globalConfig, null, 2));
-        } catch (e) { }
+        } catch (e) {}
     }
 
     async init() {
@@ -100,12 +106,18 @@ class BotManager {
                 makeCache: () => new Map(),
                 rest: { retries: 3, timeout: 15000 }
             });
-            const botData = { id: botId, client, connection: null, isOnline: false, tag: `Bot ${botId + 1}` };
+            const botData = {
+                id: botId,
+                client,
+                connection: null,
+                isOnline: false,
+                tag: `Bot ${botId + 1}`
+            };
             this.setupEvents(botData);
             this.bots.push(botData);
             try {
                 await client.login(this.tokens[i]);
-                // Stagger logins to avoid Discord rate limits (1 identify per 5s)
+                // Discord requires at least 5s between IDENTIFY payloads (login)
                 await new Promise(r => setTimeout(r, 5500));
             } catch (err) {
                 console.error(`[Bot ${botId + 1}] Login Failed: ${err.message}`);
@@ -123,12 +135,11 @@ class BotManager {
         });
 
         bot.client.on(Events.Error, (err) => {
-            console.error(`[Bot ${bot.id + 1}] Error: ${err.message}`);
+            console.error(`[Bot ${bot.id + 1}] Client Error: ${err.message}`);
         });
     }
 
     broadcastStatus() {
-        const usage = process.cpuUsage();
         const mem = process.memoryUsage();
         const stats = this.bots.map(b => ({
             id: b.id,
@@ -140,10 +151,20 @@ class BotManager {
         this.io.emit('botStatus', {
             bots: stats,
             config: this.globalConfig,
-            usage: { cpu: usage, mem }
+            usage: { mem }
         });
     }
 
+    // ─── JOIN VOICE CHANNEL ──────────────────────────────────────────────────────
+    // KEY RULES:
+    // 1. group: bot.client.user.id  → MUST be set. When multiple Discord clients run
+    //    in the same Node.js process, without a unique group each bot's joinVoiceChannel
+    //    call OVERWRITES the previous one in @discordjs/voice's internal connection map
+    //    (keyed by guildId). Only the last bot would actually be connected.
+    //    Setting group = each bot's userId gives each bot its own slot.
+    // 2. All connections still subscribe to the SAME masterPlayer — subscriptions are
+    //    independent of group. Audio reaches all 30 bots.
+    // 3. Bots join in batches of 5 every 300ms to avoid flooding Discord's voice server.
     async joinVC(input) {
         const channelId = String(input).replace(/\D/g, '');
         if (!channelId) return;
@@ -151,56 +172,79 @@ class BotManager {
         this.saveConfig();
 
         const onlineBots = this.bots.filter(b => b.isOnline);
-        console.log(`[System] Joining ${onlineBots.length} bots to channel ${channelId} simultaneously...`);
+        console.log(`[System] Joining ${onlineBots.length} bots to channel ${channelId}...`);
 
-        // Join ALL bots in parallel — no sequential delay!
-        const results = await Promise.allSettled(onlineBots.map(async (bot) => {
-            try {
-                const channel = await bot.client.channels.fetch(channelId);
-                if (!channel) throw new Error('Channel not found');
+        // Batch join: 5 bots simultaneously, 300ms between batches
+        const BATCH_SIZE = 5;
+        const BATCH_DELAY = 300; // ms between batches
+        let joined = 0;
+        let failed = 0;
 
-                if (bot.connection && bot.connection.state.status !== VoiceConnectionStatus.Destroyed) {
-                    bot.connection.destroy();
-                }
+        for (let i = 0; i < onlineBots.length; i += BATCH_SIZE) {
+            const batch = onlineBots.slice(i, i + BATCH_SIZE);
 
-                bot.connection = joinVoiceChannel({
-                    channelId: channel.id,
-                    guildId: channel.guild.id,
-                    adapterCreator: channel.guild.voiceAdapterCreator,
-                    selfDeaf: true
-                    // NOTE: do NOT set 'group' — all bots must share the default group
-                    // so they can all subscribe to the same masterPlayer
-                });
+            const batchResults = await Promise.allSettled(batch.map(async (bot) => {
+                try {
+                    const channel = await bot.client.channels.fetch(channelId);
+                    if (!channel) throw new Error('Channel not found');
 
-                // Wait for the connection to become Ready before subscribing
-                await new Promise((resolve, reject) => {
-                    const timeout = setTimeout(() => reject(new Error('Connection timeout')), 10000);
-                    bot.connection.once(VoiceConnectionStatus.Ready, () => {
-                        clearTimeout(timeout);
-                        resolve();
-                    });
-                    bot.connection.once(VoiceConnectionStatus.Destroyed, () => {
-                        clearTimeout(timeout);
-                        reject(new Error('Connection destroyed'));
-                    });
-                    // Also resolve immediately if already ready
-                    if (bot.connection.state.status === VoiceConnectionStatus.Ready) {
-                        clearTimeout(timeout);
-                        resolve();
+                    // Destroy old connection if exists
+                    if (bot.connection && bot.connection.state.status !== VoiceConnectionStatus.Destroyed) {
+                        bot.connection.destroy();
+                        bot.connection = null;
                     }
-                });
 
-                bot.connection.subscribe(this.masterPlayer);
-                console.log(`[Bot ${bot.id + 1}] Joined VC ✓`);
-            } catch (err) {
-                console.error(`[Bot ${bot.id + 1}] Failed to join: ${err.message}`);
-                throw err;
+                    // ← group: bot.client.user.id is REQUIRED here
+                    bot.connection = joinVoiceChannel({
+                        channelId: channel.id,
+                        guildId: channel.guild.id,
+                        adapterCreator: channel.guild.voiceAdapterCreator,
+                        selfDeaf: true,
+                        group: bot.client.user.id  // ← CRITICAL: unique slot per bot
+                    });
+
+                    // Wait for connection to become Ready (max 10s)
+                    await entersState(bot.connection, VoiceConnectionStatus.Ready, 10_000);
+
+                    // Subscribe this connection to the shared master player
+                    bot.connection.subscribe(this.masterPlayer);
+
+                    // Auto-reconnect if connection is dropped
+                    bot.connection.on(VoiceConnectionStatus.Disconnected, async () => {
+                        try {
+                            // Try to reconnect within 5 seconds
+                            await Promise.race([
+                                entersState(bot.connection, VoiceConnectionStatus.Signalling, 5_000),
+                                entersState(bot.connection, VoiceConnectionStatus.Connecting, 5_000),
+                            ]);
+                        } catch {
+                            // Reconnect failed — destroy and clean up
+                            if (bot.connection) {
+                                try { bot.connection.destroy(); } catch {}
+                                bot.connection = null;
+                                this.broadcastStatus();
+                            }
+                        }
+                    });
+
+                    console.log(`[Bot ${bot.id + 1}] Joined VC ✓`);
+                } catch (err) {
+                    console.error(`[Bot ${bot.id + 1}] Failed to join: ${err.message}`);
+                    throw err;
+                }
+            }));
+
+            joined += batchResults.filter(r => r.status === 'fulfilled').length;
+            failed += batchResults.filter(r => r.status === 'rejected').length;
+            this.broadcastStatus();
+
+            // Wait before next batch (skip wait after last batch)
+            if (i + BATCH_SIZE < onlineBots.length) {
+                await new Promise(r => setTimeout(r, BATCH_DELAY));
             }
-        }));
+        }
 
-        const joined = results.filter(r => r.status === 'fulfilled').length;
-        const failed = results.filter(r => r.status === 'rejected').length;
-        console.log(`[System] Join complete: ${joined} joined, ${failed} failed.`);
+        console.log(`[System] Join complete — ${joined} joined, ${failed} failed.`);
         this.broadcastStatus();
     }
 
@@ -210,16 +254,18 @@ class BotManager {
         this.stopAll();
         for (const bot of this.bots) {
             if (bot.connection) {
-                try { bot.connection.destroy(); } catch (e) { }
+                try { bot.connection.destroy(); } catch {}
                 bot.connection = null;
             }
         }
         this.broadcastStatus();
     }
 
+    // ─── FFMPEG ARGS ─────────────────────────────────────────────────────────────
+    // Clean, correct raw-PCM args for Discord voice (48kHz stereo s16le)
+    // No -re (that throttles and causes dropouts), no video encoder flags
     getFFmpegArgs(filePath, startTime = 0) {
         const args = [];
-        // Seek BEFORE -i for fast seek (keyframe-accurate)
         if (startTime > 0) args.push('-ss', String(startTime));
         args.push('-i', filePath);
 
@@ -230,15 +276,16 @@ class BotManager {
         if (filters.length > 0) args.push('-af', filters.join(','));
 
         args.push(
-            '-vn',          // Discard any video stream (saves CPU)
-            '-f', 's16le',  // Raw signed 16-bit little-endian PCM
-            '-ar', '48000', // Discord requires 48kHz
-            '-ac', '2',     // Stereo
-            'pipe:1'        // Output to stdout
+            '-vn',         // Discard any video streams (saves CPU)
+            '-f', 's16le', // Raw signed 16-bit little-endian PCM
+            '-ar', '48000',// Discord requires 48kHz sample rate
+            '-ac', '2',    // Stereo
+            'pipe:1'       // Output to stdout
         );
         return args;
     }
 
+    // ─── PLAY AUDIO ──────────────────────────────────────────────────────────────
     playAll(audioFileName, startTime = 0) {
         const filePath = path.join(this.audioDir, audioFileName);
         if (!fs.existsSync(filePath)) {
@@ -249,33 +296,29 @@ class BotManager {
         this.globalConfig.currentAudio = audioFileName;
         this.saveConfig();
 
-        // Kill any existing ffmpeg process
+        // Kill any existing FFmpeg process
         if (this.centralFFmpeg) {
-            try { this.centralFFmpeg.kill('SIGKILL'); } catch (e) { }
+            try { this.centralFFmpeg.kill('SIGKILL'); } catch {}
             this.centralFFmpeg = null;
         }
         this.masterPlayer.stop(true);
 
         const args = this.getFFmpegArgs(filePath, startTime);
 
-        // Use system ffmpeg directly (Render has it pre-installed)
-        // Fall back to ffmpeg-static only if needed
+        // Prefer ffmpeg-static if available, fall back to system ffmpeg
         let ffmpegCmd = 'ffmpeg';
         try {
             const staticPath = require('ffmpeg-static');
-            if (staticPath && fs.existsSync(staticPath)) {
-                ffmpegCmd = staticPath;
-            }
-        } catch (e) { }
+            if (staticPath && fs.existsSync(staticPath)) ffmpegCmd = staticPath;
+        } catch {}
 
-        console.log(`[FFmpeg] Starting: ${ffmpegCmd} with ${args.length} args for ${audioFileName}`);
+        console.log(`[FFmpeg] Starting playback: ${audioFileName}`);
         this.centralFFmpeg = spawn(ffmpegCmd, args);
 
         this.centralFFmpeg.on('error', (err) => {
             console.error(`[FFmpeg] Spawn error: ${err.message}`);
         });
 
-        // Log ffmpeg stderr for debugging (shows encoding info and errors)
         let stderrData = '';
         this.centralFFmpeg.stderr.on('data', (chunk) => {
             stderrData += chunk.toString();
@@ -284,18 +327,15 @@ class BotManager {
         this.centralFFmpeg.on('close', (code) => {
             if (code !== 0 && code !== null) {
                 console.error(`[FFmpeg] Exited with code ${code}`);
-                // Log last 500 chars of stderr for debugging
-                if (stderrData) {
-                    console.error(`[FFmpeg] stderr: ${stderrData.slice(-500)}`);
-                }
+                if (stderrData) console.error(`[FFmpeg] stderr: ${stderrData.slice(-500)}`);
             }
         });
 
-        // Buffer FFmpeg output with generous highWaterMark.
-        // A PassThrough is essential here: it decouples FFmpeg's write speed from
-        // @discordjs/voice's read speed, preventing backpressure that causes stutter
-        // when 30 bots all drain from the same stream simultaneously.
-        const audioBuffer = new PassThrough({ highWaterMark: 1024 * 1024 * 4 }); // 4MB buffer
+        // PassThrough buffer decouples FFmpeg's write speed from 30 bots reading
+        // simultaneously. Without this, one slow bot causes backpressure that
+        // starves all other bots → audio stutter/dropout.
+        // 4MB = ~10 seconds of pre-buffered audio at 48kHz stereo s16le
+        const audioBuffer = new PassThrough({ highWaterMark: 1024 * 1024 * 4 });
         this.centralFFmpeg.stdout.pipe(audioBuffer, { end: true });
 
         const resource = createAudioResource(audioBuffer, {
@@ -311,10 +351,10 @@ class BotManager {
     stopAll() {
         this.globalConfig.currentAudio = null;
         if (this.centralFFmpeg) {
-            try { this.centralFFmpeg.kill('SIGKILL'); } catch (e) { }
+            try { this.centralFFmpeg.kill('SIGKILL'); } catch {}
             this.centralFFmpeg = null;
         }
-        try { this.masterPlayer.stop(true); } catch (e) { }
+        try { this.masterPlayer.stop(true); } catch {}
         this.broadcastStatus();
     }
 
