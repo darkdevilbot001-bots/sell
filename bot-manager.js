@@ -239,7 +239,10 @@ class BotManager {
 
     getFFmpegArgs(filePath, startTime = 0) {
         const args = [
-            // Skip format probing — start outputting immediately with zero delay
+            // Paces FFmpeg to read at exactly 1x real-time speed.
+            // This prevents FFmpeg from rushing through the file, closing early,
+            // and causing the audio to abruptly stop before it's done.
+            '-re',
             '-probesize', '32',
             '-analyzeduration', '0',
         ];
@@ -325,14 +328,26 @@ class BotManager {
             }
         });
 
-        // STEP 6: How many bots are ready to receive audio
+        // STEP 6: PassThrough buffer
+        // This is CRITICAL. If FFmpeg writes too fast and exits, stdout closes
+        // which abruptly kills the discord.js player mid-stream. The PassThrough
+        // buffers the encoded WebmOpus packets safely.
+        const audioBuf = new PassThrough({ highWaterMark: 512 * 1024 });
+        this.centralFFmpeg.stdout.pipe(audioBuf, { end: true });
+        audioBuf.on('error', (e) => console.error(`[Buffer] ❌ ${e.message}`));
+        audioBuf.on('end', () => console.log(`[Buffer] Ended — total: ${totalBytes} bytes`));
+        
+        // Handle unexpected FFmpeg crash to not hang player
+        this.centralFFmpeg.on('error', () => { try { audioBuf.destroy(); } catch {} });
+
+        // STEP 7: How many bots are ready to receive audio
         const subs = this.bots.filter(b =>
             b.connection && b.connection.state.status !== VoiceConnectionStatus.Destroyed
         ).length;
         console.log(`[Audio] Creating resource (WebmOpus) | ${subs}/30 bots subscribed`);
 
-        // We stream DIRECTLY from FFmpeg stdout. No PassThrough needed for WebmOpus.
-        const resource = createAudioResource(this.centralFFmpeg.stdout, {
+        // Read from the PassThrough buffer, not directly from stdout
+        const resource = createAudioResource(audioBuf, {
             inputType: StreamType.WebmOpus,
             inlineVolume: false
         });
