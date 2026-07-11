@@ -10,7 +10,7 @@ const {
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
-// stream module no longer needed (PassThrough removed for direct FFmpeg piping)
+const { PassThrough } = require('stream');
 
 class BotManager {
     constructor(io) {
@@ -21,8 +21,8 @@ class BotManager {
         this.audioDir = path.join(__dirname, 'uploads');
         this.dataDir = path.join(__dirname, 'data');
 
-        // MASTER PLAYER: One engine for the whole fleet
-        this.masterPlayer = createAudioPlayer();
+        // MASTER PLAYER: One shared engine for all 30 bots
+        this.masterPlayer = createAudioPlayer({ behaviors: { noSubscriberAction: 'play' } });
         this.centralFFmpeg = null;
 
         if (!fs.existsSync(this.audioDir)) fs.mkdirSync(this.audioDir, { recursive: true });
@@ -167,8 +167,9 @@ class BotManager {
                     channelId: channel.id,
                     guildId: channel.guild.id,
                     adapterCreator: channel.guild.voiceAdapterCreator,
-                    selfDeaf: true,
-                    group: bot.client.user.id
+                    selfDeaf: true
+                    // NOTE: do NOT set 'group' — all bots must share the default group
+                    // so they can all subscribe to the same masterPlayer
                 });
 
                 // Wait for the connection to become Ready before subscribing
@@ -218,8 +219,7 @@ class BotManager {
 
     getFFmpegArgs(filePath, startTime = 0) {
         const args = [];
-        // Low-latency flags: avoid buffering at the input side
-        args.push('-re');           // Read input at native frame rate (prevents buffer starvation)
+        // Seek BEFORE -i for fast seek (keyframe-accurate)
         if (startTime > 0) args.push('-ss', String(startTime));
         args.push('-i', filePath);
 
@@ -230,13 +230,11 @@ class BotManager {
         if (filters.length > 0) args.push('-af', filters.join(','));
 
         args.push(
-            '-f', 's16le',
-            '-ar', '48000',
-            '-ac', '2',
-            '-threads', '2',        // 2 threads is optimal for audio encode
-            '-flush_packets', '1',  // Flush output immediately — no output buffering
-            '-bufsize', '64k',      // Small encode buffer for tight latency
-            'pipe:1'
+            '-vn',          // Discard any video stream (saves CPU)
+            '-f', 's16le',  // Raw signed 16-bit little-endian PCM
+            '-ar', '48000', // Discord requires 48kHz
+            '-ac', '2',     // Stereo
+            'pipe:1'        // Output to stdout
         );
         return args;
     }
@@ -293,10 +291,14 @@ class BotManager {
             }
         });
 
-        // Pipe FFmpeg stdout DIRECTLY — no extra PassThrough hop to avoid backpressure stuttering
-        // Set a generous highWaterMark on stdout itself for smooth multi-subscriber streaming
-        this.centralFFmpeg.stdout.setEncoding(null); // ensure binary mode
-        const resource = createAudioResource(this.centralFFmpeg.stdout, {
+        // Buffer FFmpeg output with generous highWaterMark.
+        // A PassThrough is essential here: it decouples FFmpeg's write speed from
+        // @discordjs/voice's read speed, preventing backpressure that causes stutter
+        // when 30 bots all drain from the same stream simultaneously.
+        const audioBuffer = new PassThrough({ highWaterMark: 1024 * 1024 * 4 }); // 4MB buffer
+        this.centralFFmpeg.stdout.pipe(audioBuffer, { end: true });
+
+        const resource = createAudioResource(audioBuffer, {
             inputType: StreamType.Raw,
             inlineVolume: false
         });
