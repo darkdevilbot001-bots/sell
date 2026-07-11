@@ -41,8 +41,11 @@ class BotManager {
             behaviors: { noSubscriberAction: NoSubscriberBehavior.Play }
         });
 
+        // ── PLAYER STATE LOGGING ─────────────────────────────────────────────
         this.masterPlayer.on(AudioPlayerStatus.Idle, () => {
+            console.log('[Player] ⏹ State → IDLE');
             if (this.globalConfig.loop && this.globalConfig.currentAudio) {
+                console.log('[Player] 🔁 Loop enabled, restarting...');
                 setTimeout(() => this.playAll(this.globalConfig.currentAudio), 500);
             } else {
                 this.globalConfig.currentAudio = null;
@@ -50,10 +53,34 @@ class BotManager {
             }
         });
 
+        this.masterPlayer.on(AudioPlayerStatus.Buffering, () => {
+            console.log('[Player] ⏳ State → BUFFERING (reading first frames...)');
+        });
+
+        this.masterPlayer.on(AudioPlayerStatus.Playing, () => {
+            const subs = this.bots.filter(b => b.connection && b.connection.state.status !== VoiceConnectionStatus.Destroyed).length;
+            console.log(`[Player] ▶ State → PLAYING | Active connections: ${subs}/30`);
+        });
+
+        this.masterPlayer.on(AudioPlayerStatus.AutoPaused, () => {
+            console.log('[Player] ⚠ State → AUTO-PAUSED (no active subscribers! Bots may not be connected)');
+        });
+
+        this.masterPlayer.on(AudioPlayerStatus.Paused, () => {
+            console.log('[Player] ⏸ State → PAUSED');
+        });
+
         this.masterPlayer.on('error', (err) => {
-            console.error(`[Player] Error: ${err.message}`);
+            console.error(`[Player] ❌ ERROR: ${err.message}`);
+            console.error(`[Player] ❌ Resource: ${err.resource?.metadata ?? 'unknown'}`);
             this.globalConfig.currentAudio = null;
             this.broadcastStatus();
+        });
+
+        this.masterPlayer.on('stateChange', (oldState, newState) => {
+            if (oldState.status !== newState.status) {
+                console.log(`[Player] 🔄 ${oldState.status} → ${newState.status}`);
+            }
         });
 
         this.loadConfig();
@@ -241,7 +268,7 @@ class BotManager {
     playAll(audioFileName, startTime = 0) {
         const filePath = path.join(this.audioDir, audioFileName);
         if (!fs.existsSync(filePath)) {
-            console.error(`[System] File not found: ${audioFileName}`);
+            console.error(`[Audio] ❌ File not found: ${audioFileName}`);
             return;
         }
 
@@ -262,37 +289,59 @@ class BotManager {
             if (s && fs.existsSync(s)) ffmpegCmd = s;
         } catch {}
 
-        console.log(`[FFmpeg] Starting: ${audioFileName}`);
+        // STEP 1: Print exact FFmpeg command so we can verify it
+        console.log(`[FFmpeg] CMD: ${ffmpegCmd} ${args.join(' ')}`);
         this.centralFFmpeg = spawn(ffmpegCmd, args);
 
-        this.centralFFmpeg.on('error', (err) => console.error(`[FFmpeg] Error: ${err.message}`));
+        // STEP 2: Detect spawn failure
+        this.centralFFmpeg.on('error', (err) => {
+            console.error(`[FFmpeg] ❌ Spawn error: ${err.message}`);
+        });
 
-        let stderr = '';
-        this.centralFFmpeg.stderr.on('data', d => { stderr += d.toString(); });
-        this.centralFFmpeg.on('close', (code) => {
-            if (code !== 0 && code !== null) {
-                console.error(`[FFmpeg] Exit ${code}: ${stderr.slice(-300)}`);
+        // STEP 3: Stream stderr LIVE line-by-line (codec errors, file issues, etc.)
+        this.centralFFmpeg.stderr.on('data', (chunk) => {
+            chunk.toString().split('\n').forEach(line => {
+                if (line.trim()) console.log(`[FFmpeg] ${line.trim()}`);
+            });
+        });
+
+        // STEP 4: Exit code
+        this.centralFFmpeg.on('close', (code, signal) => {
+            console.log(`[FFmpeg] Closed — code=${code} signal=${signal}`);
+        });
+
+        // STEP 5: Detect when FFmpeg first produces audio output
+        let firstChunk = true;
+        let totalBytes = 0;
+        this.centralFFmpeg.stdout.on('data', (chunk) => {
+            totalBytes += chunk.length;
+            if (firstChunk) {
+                firstChunk = false;
+                console.log(`[FFmpeg] ✅ First PCM chunk: ${chunk.length} bytes`);
             }
         });
 
-        // PassThrough with 512KB buffer (~2.7s of audio at 48kHz stereo s16le).
-        // This decouples FFmpeg's write speed from @discordjs/voice's 20ms read cycle.
-        // Too small → underrun stutter. Too large → FFmpeg blocks on backpressure.
-        // 512KB is the sweet spot for 30 simultaneous subscribers.
+        // STEP 6: PassThrough buffer
         const audioBuf = new PassThrough({ highWaterMark: 512 * 1024 });
         this.centralFFmpeg.stdout.pipe(audioBuf, { end: true });
+        audioBuf.on('error', (e) => console.error(`[Buffer] ❌ ${e.message}`));
+        audioBuf.on('end', () => console.log(`[Buffer] Ended — total: ${totalBytes} bytes`));
 
-        // Destroy audioBuf if FFmpeg crashes to prevent the player hanging forever
-        this.centralFFmpeg.on('close', () => { try { audioBuf.end(); } catch {} });
-        this.centralFFmpeg.on('error', () => { try { audioBuf.destroy(); } catch {} });
+        // STEP 7: How many bots are ready to receive audio
+        const subs = this.bots.filter(b =>
+            b.connection && b.connection.state.status !== VoiceConnectionStatus.Destroyed
+        ).length;
+        console.log(`[Audio] Creating resource | ${subs}/30 bots subscribed`);
 
         const resource = createAudioResource(audioBuf, {
             inputType: StreamType.Raw,
             inlineVolume: false
         });
 
+        // STEP 8: Call play and report
         this.masterPlayer.play(resource);
-        console.log(`[System] Now playing: ${audioFileName}`);
+        console.log(`[Audio] ✅ player.play() called for: ${audioFileName}`);
+        console.log(`[Audio] Watch for: [Player] 🔄 idle → buffering → playing`);
         this.broadcastStatus();
     }
 
