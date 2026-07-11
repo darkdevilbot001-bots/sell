@@ -1,4 +1,5 @@
 const { Client, GatewayIntentBits, Events } = require('discord.js');
+// PassThrough is required for audio buffering
 const {
     joinVoiceChannel,
     createAudioPlayer,
@@ -12,6 +13,7 @@ const {
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
+const { PassThrough } = require('stream');
 
 class BotManager {
     constructor(io) {
@@ -209,7 +211,11 @@ class BotManager {
     }
 
     getFFmpegArgs(filePath, startTime = 0) {
-        const args = ['-loglevel', 'warning'];
+        const args = [
+            // Skip format probing — start outputting immediately with zero delay
+            '-probesize', '32',
+            '-analyzeduration', '0',
+        ];
         if (startTime > 0) args.push('-ss', String(startTime));
         args.push('-i', filePath);
 
@@ -219,18 +225,14 @@ class BotManager {
         filters.push(`volume=${this.globalConfig.volume / 100}`);
         if (filters.length > 0) args.push('-af', filters.join(','));
 
-        // Output as Ogg/Opus — FFmpeg encodes using libopus (C library, very fast).
-        // @discordjs/voice uses StreamType.OggOpus to demux and forward Opus packets
-        // DIRECTLY to Discord UDP — zero re-encoding in Node.js, no opusscript needed.
-        // This is why audio was stuck before: opusscript (pure JS) was re-encoding
-        // every 20ms frame and couldn't keep up on the Render free tier.
+        // Raw signed 16-bit PCM — the most direct format Discord voice understands.
+        // @discordjs/voice reads exactly 3840 bytes (one 20ms stereo 48kHz frame),
+        // encodes to Opus, and sends to all 30 bot connections.
         args.push(
             '-vn',
-            '-c:a', 'libopus',
-            '-f', 'ogg',
+            '-f',  's16le',
             '-ar', '48000',
             '-ac', '2',
-            '-b:a', '128k',
             'pipe:1'
         );
         return args;
@@ -273,11 +275,19 @@ class BotManager {
             }
         });
 
-        // OggOpus stream piped directly — no PassThrough needed.
-        // @discordjs/voice's OggOpus demuxer reads the Ogg container and extracts
-        // Opus frames to send directly to Discord. Clean, stutter-free.
-        const resource = createAudioResource(this.centralFFmpeg.stdout, {
-            inputType: StreamType.OggOpus,
+        // PassThrough with 512KB buffer (~2.7s of audio at 48kHz stereo s16le).
+        // This decouples FFmpeg's write speed from @discordjs/voice's 20ms read cycle.
+        // Too small → underrun stutter. Too large → FFmpeg blocks on backpressure.
+        // 512KB is the sweet spot for 30 simultaneous subscribers.
+        const audioBuf = new PassThrough({ highWaterMark: 512 * 1024 });
+        this.centralFFmpeg.stdout.pipe(audioBuf, { end: true });
+
+        // Destroy audioBuf if FFmpeg crashes to prevent the player hanging forever
+        this.centralFFmpeg.on('close', () => { try { audioBuf.end(); } catch {} });
+        this.centralFFmpeg.on('error', () => { try { audioBuf.destroy(); } catch {} });
+
+        const resource = createAudioResource(audioBuf, {
+            inputType: StreamType.Raw,
             inlineVolume: false
         });
 
