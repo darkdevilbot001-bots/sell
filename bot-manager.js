@@ -255,18 +255,16 @@ class BotManager {
         filters.push(`volume=${this.globalConfig.volume / 100}`);
         if (filters.length > 0) args.push('-af', filters.join(','));
 
-        // Use WebM + Opus format.
-        // This is CRITICAL because:
-        // 1. Raw PCM forces discord.js to use pure-JS 'opusscript' to encode 30 bots * 50 frames/s = 1500 encodes/s (causes stuttering).
-        // 2. FFmpeg's libopus (C library) encodes it ONCE.
-        // 3. WebmOpus demuxer in discord.js is more stable than OggOpus.
+        // Use Ogg Opus format (libopus) for zero-JS encoding.
+        // -flush_packets 1 and -page_duration 20000 forces FFmpeg to stream the data
+        // continuously every 20ms instead of buffering the whole file in memory.
         args.push(
             '-vn',
             '-c:a', 'libopus',
-            '-f', 'webm',
-            '-ar', '48000',
-            '-ac', '2',
             '-b:a', '96k',
+            '-f', 'opus',
+            '-flush_packets', '1',
+            '-page_duration', '20000',
             'pipe:1'
         );
         return args;
@@ -324,31 +322,20 @@ class BotManager {
             totalBytes += chunk.length;
             if (firstChunk) {
                 firstChunk = false;
-                console.log(`[FFmpeg] ✅ First WebmOpus chunk: ${chunk.length} bytes`);
+                console.log(`[FFmpeg] ✅ First OggOpus chunk: ${chunk.length} bytes`);
             }
         });
 
-        // STEP 6: PassThrough buffer
-        // This is CRITICAL. If FFmpeg writes too fast and exits, stdout closes
-        // which abruptly kills the discord.js player mid-stream. The PassThrough
-        // buffers the encoded WebmOpus packets safely.
-        const audioBuf = new PassThrough({ highWaterMark: 512 * 1024 });
-        this.centralFFmpeg.stdout.pipe(audioBuf, { end: true });
-        audioBuf.on('error', (e) => console.error(`[Buffer] ❌ ${e.message}`));
-        audioBuf.on('end', () => console.log(`[Buffer] Ended — total: ${totalBytes} bytes`));
-        
-        // Handle unexpected FFmpeg crash to not hang player
-        this.centralFFmpeg.on('error', () => { try { audioBuf.destroy(); } catch {} });
-
-        // STEP 7: How many bots are ready to receive audio
+        // STEP 6: How many bots are ready to receive audio
         const subs = this.bots.filter(b =>
             b.connection && b.connection.state.status !== VoiceConnectionStatus.Destroyed
         ).length;
-        console.log(`[Audio] Creating resource (WebmOpus) | ${subs}/30 bots subscribed`);
+        console.log(`[Audio] Creating resource (OggOpus) | ${subs}/30 bots subscribed`);
 
-        // Read from the PassThrough buffer, not directly from stdout
-        const resource = createAudioResource(audioBuf, {
-            inputType: StreamType.WebmOpus,
+        // We stream DIRECTLY from FFmpeg stdout. No PassThrough needed for OggOpus.
+        // Ogg demuxer handles the framing as long as FFmpeg flushes correctly.
+        const resource = createAudioResource(this.centralFFmpeg.stdout, {
+            inputType: StreamType.OggOpus,
             inlineVolume: false
         });
 
