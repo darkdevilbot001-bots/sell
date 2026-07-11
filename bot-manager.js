@@ -252,14 +252,18 @@ class BotManager {
         filters.push(`volume=${this.globalConfig.volume / 100}`);
         if (filters.length > 0) args.push('-af', filters.join(','));
 
-        // Raw signed 16-bit PCM — the most direct format Discord voice understands.
-        // @discordjs/voice reads exactly 3840 bytes (one 20ms stereo 48kHz frame),
-        // encodes to Opus, and sends to all 30 bot connections.
+        // Use WebM + Opus format.
+        // This is CRITICAL because:
+        // 1. Raw PCM forces discord.js to use pure-JS 'opusscript' to encode 30 bots * 50 frames/s = 1500 encodes/s (causes stuttering).
+        // 2. FFmpeg's libopus (C library) encodes it ONCE.
+        // 3. WebmOpus demuxer in discord.js is more stable than OggOpus.
         args.push(
             '-vn',
-            '-f',  's16le',
+            '-c:a', 'libopus',
+            '-f', 'webm',
             '-ar', '48000',
             '-ac', '2',
+            '-b:a', '96k',
             'pipe:1'
         );
         return args;
@@ -310,35 +314,30 @@ class BotManager {
             console.log(`[FFmpeg] Closed — code=${code} signal=${signal}`);
         });
 
-        // STEP 5: Detect when FFmpeg first produces audio output
+        // STEP 5: Track how many bytes FFmpeg outputs
         let firstChunk = true;
         let totalBytes = 0;
         this.centralFFmpeg.stdout.on('data', (chunk) => {
             totalBytes += chunk.length;
             if (firstChunk) {
                 firstChunk = false;
-                console.log(`[FFmpeg] ✅ First PCM chunk: ${chunk.length} bytes`);
+                console.log(`[FFmpeg] ✅ First WebmOpus chunk: ${chunk.length} bytes`);
             }
         });
 
-        // STEP 6: PassThrough buffer
-        const audioBuf = new PassThrough({ highWaterMark: 512 * 1024 });
-        this.centralFFmpeg.stdout.pipe(audioBuf, { end: true });
-        audioBuf.on('error', (e) => console.error(`[Buffer] ❌ ${e.message}`));
-        audioBuf.on('end', () => console.log(`[Buffer] Ended — total: ${totalBytes} bytes`));
-
-        // STEP 7: How many bots are ready to receive audio
+        // STEP 6: How many bots are ready to receive audio
         const subs = this.bots.filter(b =>
             b.connection && b.connection.state.status !== VoiceConnectionStatus.Destroyed
         ).length;
-        console.log(`[Audio] Creating resource | ${subs}/30 bots subscribed`);
+        console.log(`[Audio] Creating resource (WebmOpus) | ${subs}/30 bots subscribed`);
 
-        const resource = createAudioResource(audioBuf, {
-            inputType: StreamType.Raw,
+        // We stream DIRECTLY from FFmpeg stdout. No PassThrough needed for WebmOpus.
+        const resource = createAudioResource(this.centralFFmpeg.stdout, {
+            inputType: StreamType.WebmOpus,
             inlineVolume: false
         });
 
-        // STEP 8: Call play and report
+        // STEP 7: Call play and report
         this.masterPlayer.play(resource);
         console.log(`[Audio] ✅ player.play() called for: ${audioFileName}`);
         console.log(`[Audio] Watch for: [Player] 🔄 idle → buffering → playing`);
